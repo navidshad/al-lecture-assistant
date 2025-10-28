@@ -6,6 +6,7 @@ import { encode, decode, decodeAudioData } from '../services/audioUtils';
 
 interface UseGeminiLiveProps {
   slides: Slide[];
+  generalInfo: string;
   setTranscript: Dispatch<SetStateAction<TranscriptEntry[]>>;
   isMuted: boolean;
   selectedLanguage: string;
@@ -29,7 +30,7 @@ const setActiveSlideFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
-export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage, selectedVoice, selectedModel, onSlideChange }: UseGeminiLiveProps) => {
+export const useGeminiLive = ({ slides, generalInfo, setTranscript, isMuted, selectedLanguage, selectedVoice, selectedModel, onSlideChange }: UseGeminiLiveProps) => {
   const [sessionState, setSessionState] = useState<LectureSessionState>(LectureSessionState.IDLE);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,6 +83,23 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
         });
     }
   }, []);
+  
+  const sendSlideImageContext = useCallback((slide: Slide) => {
+    if (sessionPromiseRef.current) {
+      const base64Data = slide.imageDataUrl.split(',')[1];
+      if (!base64Data) {
+        console.error("Could not extract base64 data from slide image");
+        return;
+      }
+      const imageBlob: GenAI_Blob = {
+        data: base64Data,
+        mimeType: 'image/png',
+      };
+      sessionPromiseRef.current.then(session => {
+        session.sendRealtimeInput({ media: imageBlob });
+      });
+    }
+  }, []);
 
 
   const startLecture = useCallback(() => {
@@ -102,12 +120,18 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
         tools: [{ functionDeclarations: [setActiveSlideFunctionDeclaration] }],
         systemInstruction: `You are an AI lecturer. Your primary task is to explain a presentation, slide-by-slide, in ${selectedLanguage}.
 
+        **General Information about the presentation:**
+        ${generalInfo}
+        
+        **Context:**
+        You will be provided with a summary for each slide. You will also receive an image of the current slide when it becomes active.
+
         **Workflow:**
         1. Greet the user in ${selectedLanguage}.
         2. Call 'setActiveSlide' for slide 1 to begin.
-        3. Explain the current slide's content.
-        4. After finishing your explanation for a slide, you MUST wait for the user to tell you to proceed. Do NOT automatically move to the next slide. You can say something like "Let me know when you're ready for the next slide." to prompt the user.
-        5. If the user asks a question, answer it, and then wait for further instructions.
+        3. For each slide, you MUST use the provided summary AND the visual information from the slide's image to deliver a comprehensive explanation. Describe charts, diagrams, and key visual elements seen in the image.
+        4. After explaining a slide, wait for the user to proceed. Say something like "Let me know when you're ready to continue." to prompt the user.
+        5. If the user asks a question, answer it based on the lecture plan and slide content.
 
         **Rules:**
         - All speech must be in ${selectedLanguage}.
@@ -145,9 +169,6 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
               });
             };
             
-            // Connect the microphone source to the script processor, but prevent feedback loop.
-            // A muted gain node is used to connect to the destination, which is required for 
-            // the `onaudioprocess` event to fire reliably in some browsers.
             const gainNode = audioContextRef.current.createGain();
             gainNode.gain.value = 0;
             source.connect(scriptProcessor);
@@ -155,8 +176,12 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
             gainNode.connect(audioContextRef.current.destination);
             
             setSessionState(LectureSessionState.READY);
-            const allSlidesText = slides.map(s => `Slide ${s.pageNumber} Content: "${s.textContent}"`).join('\n\n');
-            sendTextMessage(`Here is the content for all the lecture slides:\n${allSlidesText}\n\nNow, please begin the lecture as instructed.`);
+            
+            const lecturePlanForAI = slides.map(s => (
+                `Slide ${s.pageNumber}: ${s.summary}`
+            )).join('\n');
+
+            sendTextMessage(`Here are the summaries for each slide:\n\n${lecturePlanForAI}\n\nNow, please begin the lecture as instructed.`);
 
           } catch (err) {
               console.error('Microphone access denied or error:', err);
@@ -169,7 +194,6 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
             if (message.serverContent) {
                 setSessionState(LectureSessionState.LECTURING);
             }
-            // FIX: Replaced `message.userInput` with `message.serverContent?.inputTranscription` to correctly detect user input.
             if (message.serverContent?.inputTranscription) {
                 setSessionState(LectureSessionState.LISTENING);
             }
@@ -205,17 +229,14 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
               }
             }
 
-            // Handle transcript streaming
             if (message.serverContent?.inputTranscription) {
               const text = message.serverContent.inputTranscription.text;
               setTranscript(prev => {
                   const newTranscript = [...prev];
                   const lastEntry = newTranscript[newTranscript.length - 1];
                   if (lastEntry?.speaker === 'user') {
-                      // Append to the last user message
                       lastEntry.text += text;
                   } else {
-                      // Start a new user message
                       newTranscript.push({ speaker: 'user', text });
                   }
                   return newTranscript;
@@ -228,17 +249,14 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
                     const newTranscript = [...prev];
                     const lastEntry = newTranscript[newTranscript.length - 1];
                     if (lastEntry?.speaker === 'ai') {
-                        // Append to the last AI message
                         lastEntry.text += text;
                     } else {
-                        // Start a new AI message
                         newTranscript.push({ speaker: 'ai', text });
                     }
                     return newTranscript;
                 });
             }
 
-            // Handle audio
             const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
             if (audioData && outputAudioContextRef.current) {
                 const outputCtx = outputAudioContextRef.current;
@@ -274,7 +292,7 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
     });
 
     sessionPromiseRef.current = sessionPromise;
-  }, [slides, disconnect, setTranscript, sendTextMessage, selectedLanguage, selectedVoice, selectedModel, onSlideChange]);
+  }, [slides, generalInfo, disconnect, setTranscript, sendTextMessage, selectedLanguage, selectedVoice, selectedModel, onSlideChange, sendSlideImageContext]);
 
   const replay = useCallback(() => sendTextMessage("Please repeat your explanation for the current slide."), [sendTextMessage]);
   const next = useCallback(() => sendTextMessage("Go to the next slide."), [sendTextMessage]);
@@ -287,6 +305,5 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
     };
   }, [disconnect]);
 
-  // FIX: Export `disconnect` function as `end`.
-  return { sessionState, startLecture, replay, next, previous, end: disconnect, error, goToSlide, sendTextMessage };
+  return { sessionState, startLecture, replay, next, previous, end: disconnect, error, goToSlide, sendTextMessage, sendSlideImageContext };
 };

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Slide, TranscriptEntry } from '../types';
+import { Slide, TranscriptEntry, LectureSessionState } from '../types';
 import { useGeminiLive } from '../hooks/useGeminiLive';
 import { useToast } from '../hooks/useToast';
 import SlideViewer from '../components/SlideViewer';
@@ -9,13 +9,14 @@ import { Power, PlayCircle } from 'lucide-react';
 
 interface LecturePageProps {
   slides: Slide[];
+  generalInfo: string;
   onEndSession: () => void;
   selectedLanguage: string;
   selectedVoice: string;
   selectedModel: string;
 }
 
-const LecturePage: React.FC<LecturePageProps> = ({ slides, onEndSession, selectedLanguage, selectedVoice, selectedModel }) => {
+const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSession, selectedLanguage, selectedVoice, selectedModel }) => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -70,8 +71,9 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, onEndSession, selecte
     }
   }, [slides.length]);
 
-  const { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage } = useGeminiLive({
+  const { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, sendSlideImageContext } = useGeminiLive({
     slides,
+    generalInfo,
     setTranscript,
     isMuted,
     selectedLanguage,
@@ -86,6 +88,18 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, onEndSession, selecte
     }
   }, [error, showToast]);
   
+  // Send the image context whenever the slide changes, but only if the lecture is active.
+  useEffect(() => {
+    if (
+      hasLectureStarted &&
+      sendSlideImageContext &&
+      slides[currentSlideIndex] &&
+      (sessionState === LectureSessionState.LECTURING || sessionState === LectureSessionState.LISTENING || sessionState === LectureSessionState.READY)
+    ) {
+      sendSlideImageContext(slides[currentSlideIndex]);
+    }
+  }, [currentSlideIndex, hasLectureStarted, sendSlideImageContext, slides, sessionState]);
+
   const handleStartLecture = () => {
     setHasLectureStarted(true);
     startLecture();
@@ -93,19 +107,19 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, onEndSession, selecte
 
   const handleNext = useCallback(() => {
     if (currentSlideIndex < slides.length - 1) {
-      const newIndex = currentSlideIndex + 1;
-      setCurrentSlideIndex(newIndex);
-      goToSlide(newIndex + 1);
+      // Optimistically update UI, AI will confirm via function call
+      setCurrentSlideIndex(prev => prev + 1);
+      next();
     }
-  }, [currentSlideIndex, slides.length, goToSlide]);
+  }, [currentSlideIndex, slides.length, next]);
 
   const handlePrevious = useCallback(() => {
     if (currentSlideIndex > 0) {
-      const newIndex = currentSlideIndex - 1;
-      setCurrentSlideIndex(newIndex);
-      goToSlide(newIndex + 1);
+      // Optimistically update UI, AI will confirm via function call
+      setCurrentSlideIndex(prev => prev - 1);
+      previous();
     }
-  }, [currentSlideIndex, goToSlide]);
+  }, [currentSlideIndex, previous]);
 
   const handleSelectSlide = useCallback((index: number) => {
     if (index !== currentSlideIndex) {

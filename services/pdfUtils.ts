@@ -1,10 +1,9 @@
-
-import { Slide } from '../types';
+import { ParsedSlide } from '../types';
 
 // This is to inform TypeScript that pdfjsLib is available globally from the script tag in index.html
 declare const pdfjsLib: any;
 
-export const parsePdf = async (file: File): Promise<Slide[]> => {
+export const parsePdf = async (file: File): Promise<ParsedSlide[]> => {
   const fileReader = new FileReader();
   
   return new Promise((resolve, reject) => {
@@ -17,7 +16,7 @@ export const parsePdf = async (file: File): Promise<Slide[]> => {
       
       try {
         const pdf = await pdfjsLib.getDocument(typedarray).promise;
-        const slides: Slide[] = [];
+        const slides: ParsedSlide[] = [];
 
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);

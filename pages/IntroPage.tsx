@@ -1,17 +1,58 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Slide } from '../types';
+import { Slide, ParsedSlide } from '../types';
 import { parsePdf } from '../services/pdfUtils';
 import { UploadCloudIcon, Loader2, Globe, Volume2, Cpu } from 'lucide-react';
 import { SUPPORTED_LANGUES } from '../langueges.static';
+import { GoogleGenAI } from '@google/genai';
+
 
 interface IntroPageProps {
-  onLectureStart: (slides: Slide[], language: string, voice: string, model: string) => void;
+  onLectureStart: (slides: Slide[], generalInfo: string, language: string, voice: string, model: string) => void;
 }
 
 const LANGUAGE_STORAGE_KEY = 'ai-lecture-assistant-language';
 
+const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+            const result = reader.result as string;
+            // result is "data:application/pdf;base64,..."
+            // we need to strip the prefix
+            const base64String = result.split(',')[1];
+            resolve(base64String);
+        };
+        reader.onerror = error => reject(error);
+    });
+};
+
+const parseLecturePlanResponse = (planText: string): { generalInfo: string; slideSummaries: Map<number, string> } => {
+    const generalInfoMatch = planText.match(/general info:([\s\S]*?)(Slide 1:|$)/i);
+    const generalInfo = generalInfoMatch ? generalInfoMatch[1].trim() : 'No general information was provided.';
+
+    const slideSummaries = new Map<number, string>();
+    // Split by "Slide X:" but keep the delimiter in the result
+    const slideSections = planText.split(/(Slide \d+:)/i);
+    
+    // The regex split results in ["...general info...", "Slide 1:", "desc for 1", "Slide 2:", "desc for 2", ...]
+    for (let i = 1; i < slideSections.length; i += 2) {
+        const slideHeader = slideSections[i];
+        const slideNumberMatch = slideHeader.match(/(\d+)/);
+        if (slideNumberMatch) {
+            const slideNumber = parseInt(slideNumberMatch[1], 10);
+            const summary = (slideSections[i + 1] || '').trim();
+            slideSummaries.set(slideNumber, summary);
+        }
+    }
+
+    return { generalInfo, slideSummaries };
+}
+
+
 const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
   const [isParsing, setIsParsing] = useState(false);
+  const [loadingText, setLoadingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
@@ -47,8 +88,9 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
 
   const models = [
     { id: 'gemini-2.5-flash-native-audio-preview-09-2025', name: 'Gemini 2.5 Flash Native Audio' },
-    { id: 'gemini-live-2.5-flash-preview', name: 'Gemini 2.5 Flash Live' },
-    { id: 'gemini-2.0-flash-live-001', name: 'Gemini 2.0 Flash Live' },
+    // The following models are commented out as they are not optimal for this use case
+    // { id: 'gemini-live-2.5-flash-preview', name: 'Gemini 2.5 Flash Live' },
+    // { id: 'gemini-2.0-flash-live-001', name: 'Gemini 2.0 Flash Live' },
   ];
 
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -56,14 +98,66 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
     if (file) {
       setIsParsing(true);
       setError(null);
+      
       try {
+        setLoadingText('Parsing your PDF for slide images...');
         const parsedSlides = await parsePdf(file);
-        onLectureStart(parsedSlides, selectedLanguage, selectedVoice, selectedModel);
+        
+        setLoadingText('Generating AI lecture plan... This may take a minute.');
+
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+        
+        const base64Pdf = await fileToBase64(file);
+        const pdfPart = {
+          inlineData: {
+            mimeType: 'application/pdf',
+            data: base64Pdf,
+          },
+        };
+
+        const prompt = `You are an expert instructional designer. Analyze the provided PDF document and generate a concise lecture plan in the following format.
+- Do NOT add any markdown formatting like \`\`\` or bolding.
+- The output must be plain text.
+- The description for "general info" should be a single paragraph.
+- The description for each slide must be a single sentence.
+
+general info:
+<Provide a brief, one-paragraph overview of the entire presentation's purpose and key takeaways.>
+
+Slide 1:
+<Provide a one-sentence description of the content on this slide.>
+
+Slide 2:
+<Provide a one-sentence description of the content on this slide.>
+
+... continue for all slides in the document.`;
+
+        const textPart = { text: prompt };
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: { parts: [textPart, pdfPart] },
+        });
+        
+        const lecturePlanText = response.text;
+        const { generalInfo, slideSummaries } = parseLecturePlanResponse(lecturePlanText);
+        
+        const enhancedSlides: Slide[] = parsedSlides.map(parsedSlide => {
+            const summary = slideSummaries.get(parsedSlide.pageNumber);
+            return {
+                ...parsedSlide,
+                summary: summary ?? 'No summary was generated for this slide.',
+            };
+        });
+
+        onLectureStart(enhancedSlides, generalInfo, selectedLanguage, selectedVoice, selectedModel);
+
       } catch (err) {
-        setError('Failed to parse PDF. Please try another file.');
+        setError('Failed to process PDF. The AI may be busy or the file may be invalid. Please try again.');
         console.error(err);
       } finally {
         setIsParsing(false);
+        setLoadingText('');
       }
     }
   }, [onLectureStart, selectedLanguage, selectedVoice, selectedModel]);
@@ -138,7 +232,7 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
             {isParsing ? (
               <>
                 <Loader2 className="h-16 w-16 text-blue-500 animate-spin" />
-                <p className="mt-4 text-lg text-gray-400">Parsing your lecture...</p>
+                <p className="mt-4 text-lg text-gray-400 text-center">{loadingText}</p>
               </>
             ) : (
               <>
