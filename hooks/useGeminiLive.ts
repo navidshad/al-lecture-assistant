@@ -42,8 +42,6 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
-  const currentInputTranscriptionRef = useRef('');
-  const currentOutputTranscriptionRef = useRef('');
   const isMutedRef = useRef(isMuted);
 
   useEffect(() => {
@@ -207,24 +205,37 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
               }
             }
 
-            // Handle transcript
-            if (message.serverContent?.outputTranscription) {
-                currentOutputTranscriptionRef.current += message.serverContent.outputTranscription.text;
-            }
+            // Handle transcript streaming
             if (message.serverContent?.inputTranscription) {
-                currentInputTranscriptionRef.current += message.serverContent.inputTranscription.text;
+              const text = message.serverContent.inputTranscription.text;
+              setTranscript(prev => {
+                  const newTranscript = [...prev];
+                  const lastEntry = newTranscript[newTranscript.length - 1];
+                  if (lastEntry?.speaker === 'user') {
+                      // Append to the last user message
+                      lastEntry.text += text;
+                  } else {
+                      // Start a new user message
+                      newTranscript.push({ speaker: 'user', text });
+                  }
+                  return newTranscript;
+              });
             }
-            if(message.serverContent?.turnComplete) {
-                const userInput = currentInputTranscriptionRef.current.trim();
-                const aiOutput = currentOutputTranscriptionRef.current.trim();
+    
+            if (message.serverContent?.outputTranscription) {
+                const text = message.serverContent.outputTranscription.text;
                 setTranscript(prev => {
                     const newTranscript = [...prev];
-                    if (userInput) newTranscript.push({ speaker: 'user', text: userInput });
-                    if (aiOutput) newTranscript.push({ speaker: 'ai', text: aiOutput });
+                    const lastEntry = newTranscript[newTranscript.length - 1];
+                    if (lastEntry?.speaker === 'ai') {
+                        // Append to the last AI message
+                        lastEntry.text += text;
+                    } else {
+                        // Start a new AI message
+                        newTranscript.push({ speaker: 'ai', text });
+                    }
                     return newTranscript;
                 });
-                currentInputTranscriptionRef.current = '';
-                currentOutputTranscriptionRef.current = '';
             }
 
             // Handle audio
