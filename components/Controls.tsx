@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Mic, MicOff, RotateCcw, ArrowLeft, ArrowRight, MessageSquare, Power } from 'lucide-react';
+import { Mic, MicOff, RotateCcw, ArrowLeft, ArrowRight, MessageSquare, Power, LayoutGrid } from 'lucide-react';
 
 interface ControlsProps {
   isMuted: boolean;
@@ -11,6 +11,7 @@ interface ControlsProps {
   isNextDisabled: boolean;
   isPreviousDisabled: boolean;
   onTranscriptToggle: () => void;
+  onSlidesToggle: () => void;
   onEndSession: () => void;
 }
 
@@ -35,13 +36,17 @@ const Controls: React.FC<ControlsProps> = ({
   isNextDisabled,
   isPreviousDisabled,
   onTranscriptToggle,
+  onSlidesToggle,
   onEndSession,
 }) => {
   return (
     <div className="flex items-center justify-between">
-       <div className="w-28">
-         <ControlButton onClick={onTranscriptToggle} className="bg-gray-700 text-gray-300" title="View Transcript">
+       <div className="w-28 flex items-center gap-2">
+         <ControlButton onClick={onTranscriptToggle} className="bg-gray-700 text-gray-300" title="Toggle Transcript">
             <MessageSquare className="h-6 w-6" />
+        </ControlButton>
+         <ControlButton onClick={onSlidesToggle} className="bg-gray-700 text-gray-300" title="Toggle Slides">
+            <LayoutGrid className="h-6 w-6" />
         </ControlButton>
        </div>
         

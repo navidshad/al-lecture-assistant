@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, Dispatch, SetStateAction } from 'react';
-import { GoogleGenAI, LiveSession, LiveServerMessage, Modality, Blob as GenAI_Blob, FunctionDeclaration, Type } from '@google/genai';
+// FIX: Removed `LiveSession` as it is not an exported member of '@google/genai'.
+import { GoogleGenAI, LiveServerMessage, Modality, Blob as GenAI_Blob, FunctionDeclaration, Type } from '@google/genai';
 import { Slide, LectureSessionState, TranscriptEntry } from '../types';
 import { encode, decode, decodeAudioData } from '../services/audioUtils';
 
@@ -32,7 +33,8 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
   const [sessionState, setSessionState] = useState<LectureSessionState>(LectureSessionState.IDLE);
   const [error, setError] = useState<string | null>(null);
 
-  const sessionPromiseRef = useRef<Promise<LiveSession> | null>(null);
+  // FIX: Replaced `Promise<LiveSession>` with `Promise<any>` as `LiveSession` is not exported.
+  const sessionPromiseRef = useRef<Promise<any> | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
@@ -100,17 +102,19 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
         outputAudioTranscription: {},
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } } },
         tools: [{ functionDeclarations: [setActiveSlideFunctionDeclaration] }],
-        systemInstruction: `You are an AI lecturer. Your primary task is to explain the content of a presentation slide by slide, entirely in the language: ${selectedLanguage}.
-        
-        Rules:
-        1. All your spoken output must be in ${selectedLanguage}.
-        2. Start by introducing yourself and welcoming the user in ${selectedLanguage}.
-        3. I will provide you with the text content for all slides.
-        4. To navigate the presentation, you MUST use the 'setActiveSlide' function. For example, when the user says "next slide", you must call 'setActiveSlide' with the appropriate slide number.
-        5. After the 'setActiveSlide' function call is successful, you will receive a confirmation. You should then begin explaining the content of the new slide.
-        6. Do NOT announce the slide change in your speech (e.g., "Moving to slide 5"). The user interface will show the slide change. Just start your explanation for that slide.
-        7. If the user asks a question, answer it in ${selectedLanguage} before asking what to do next.
-        8. Begin the lecture by calling setActiveSlide for slide number 1.`,
+        systemInstruction: `You are an AI lecturer. Your primary task is to explain a presentation, slide-by-slide, in ${selectedLanguage}.
+
+        **Workflow:**
+        1. Greet the user in ${selectedLanguage}.
+        2. Call 'setActiveSlide' for slide 1 to begin.
+        3. Explain the current slide's content.
+        4. After finishing your explanation for a slide, you MUST wait for the user to tell you to proceed. Do NOT automatically move to the next slide. You can say something like "Let me know when you're ready for the next slide." to prompt the user.
+        5. If the user asks a question, answer it, and then wait for further instructions.
+
+        **Rules:**
+        - All speech must be in ${selectedLanguage}.
+        - Use the 'setActiveSlide' function to change slides ONLY when instructed by the user (e.g., when they say "next slide" or "go to slide 5").
+        - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Just start explaining the new content of the requested slide.`,
       },
       callbacks: {
         onopen: async () => {
@@ -142,8 +146,15 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
                 session.sendRealtimeInput({ media: pcmBlob });
               });
             };
+            
+            // Connect the microphone source to the script processor, but prevent feedback loop.
+            // A muted gain node is used to connect to the destination, which is required for 
+            // the `onaudioprocess` event to fire reliably in some browsers.
+            const gainNode = audioContextRef.current.createGain();
+            gainNode.gain.value = 0;
             source.connect(scriptProcessor);
-            scriptProcessor.connect(audioContextRef.current.destination);
+            scriptProcessor.connect(gainNode);
+            gainNode.connect(audioContextRef.current.destination);
             
             setSessionState(LectureSessionState.READY);
             const allSlidesText = slides.map(s => `Slide ${s.pageNumber} Content: "${s.textContent}"`).join('\n\n');
@@ -160,7 +171,8 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
             if (message.serverContent) {
                 setSessionState(LectureSessionState.LECTURING);
             }
-            if (message.userInput) {
+            // FIX: Replaced `message.userInput` with `message.serverContent?.inputTranscription` to correctly detect user input.
+            if (message.serverContent?.inputTranscription) {
                 setSessionState(LectureSessionState.LISTENING);
             }
 
@@ -264,5 +276,6 @@ export const useGeminiLive = ({ slides, setTranscript, isMuted, selectedLanguage
     };
   }, [disconnect]);
 
-  return { sessionState, startLecture, replay, next, previous, end: disconnect, error, goToSlide };
+  // FIX: Export `disconnect` function as `end`.
+  return { sessionState, startLecture, replay, next, previous, end: disconnect, error, goToSlide, sendTextMessage };
 };
