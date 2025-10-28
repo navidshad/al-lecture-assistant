@@ -40,8 +40,8 @@ const Controls: React.FC<ControlsProps> = ({
   onEndSession,
 }) => {
   return (
-    <div className="flex items-center justify-between">
-       <div className="w-28 flex items-center gap-2">
+    <div className="flex items-center justify-between gap-4">
+       <div className="w-28 flex items-center gap-1">
          <ControlButton onClick={onTranscriptToggle} className="bg-gray-700 text-gray-300" title="Toggle Transcript">
             <MessageSquare className="h-6 w-6" />
         </ControlButton>
@@ -50,7 +50,7 @@ const Controls: React.FC<ControlsProps> = ({
         </ControlButton>
        </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-1">
             <ControlButton onClick={onPrevious} disabled={isPreviousDisabled} className="bg-gray-700 text-gray-300" title="Previous Slide">
                 <ArrowLeft className="h-6 w-6" />
             </ControlButton>
