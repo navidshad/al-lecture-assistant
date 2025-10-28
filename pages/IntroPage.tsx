@@ -1,22 +1,41 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Slide } from '../types';
 import { parsePdf } from '../services/pdfUtils';
 import { UploadCloudIcon, Loader2, Globe, Volume2, Cpu } from 'lucide-react';
+import { SUPPORTED_LANGUES } from '../langueges.static';
 
 interface IntroPageProps {
   onLectureStart: (slides: Slide[], language: string, voice: string, model: string) => void;
 }
 
+const LANGUAGE_STORAGE_KEY = 'ai-lecture-assistant-language';
+
 const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
   const [isParsing, setIsParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedLanguage, setSelectedLanguage] = useState('English');
+  
+  const [selectedLanguage, setSelectedLanguage] = useState(() => {
+    try {
+      const storedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+      if (storedLanguage && SUPPORTED_LANGUES.some(l => l.title === storedLanguage)) {
+        return storedLanguage;
+      }
+    } catch (e) {
+      console.error("Failed to read language from local storage", e);
+    }
+    return 'English';
+  });
+
   const [selectedVoice, setSelectedVoice] = useState('Zephyr');
   const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-native-audio-preview-09-2025');
 
-  const languages = [
-    'English', 'Spanish', 'French', 'German', 'Japanese', 'Mandarin Chinese', 'Russian', 'Portuguese', 'Italian', 'Korean'
-  ];
+  useEffect(() => {
+    try {
+      localStorage.setItem(LANGUAGE_STORAGE_KEY, selectedLanguage);
+    } catch (e) {
+      console.error("Failed to save language to local storage", e);
+    }
+  }, [selectedLanguage]);
 
   const voices = [
     { name: 'Zephyr', description: 'Friendly Male Voice' },
@@ -67,8 +86,8 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
                       onChange={(e) => setSelectedLanguage(e.target.value)}
                       className="w-full appearance-none rounded-lg border border-gray-600 bg-gray-700 py-2.5 pl-10 pr-4 text-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                      {languages.map(lang => (
-                          <option key={lang} value={lang}>{lang}</option>
+                      {SUPPORTED_LANGUES.map(lang => (
+                          <option key={lang.code} value={lang.title}>{lang.title}</option>
                       ))}
                   </select>
               </div>

@@ -93,18 +93,23 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, onEndSession, selecte
 
   const handleNext = useCallback(() => {
     if (currentSlideIndex < slides.length - 1) {
-      next();
+      const newIndex = currentSlideIndex + 1;
+      setCurrentSlideIndex(newIndex);
+      goToSlide(newIndex + 1);
     }
-  }, [currentSlideIndex, slides.length, next]);
+  }, [currentSlideIndex, slides.length, goToSlide]);
 
   const handlePrevious = useCallback(() => {
     if (currentSlideIndex > 0) {
-      previous();
+      const newIndex = currentSlideIndex - 1;
+      setCurrentSlideIndex(newIndex);
+      goToSlide(newIndex + 1);
     }
-  }, [currentSlideIndex, previous]);
+  }, [currentSlideIndex, goToSlide]);
 
   const handleSelectSlide = useCallback((index: number) => {
     if (index !== currentSlideIndex) {
+      setCurrentSlideIndex(index);
       goToSlide(index + 1);
     }
   }, [currentSlideIndex, goToSlide]);
