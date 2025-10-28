@@ -145,7 +145,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, onEndSession, selecte
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex-shrink-0 bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 p-3 flex items-center justify-between z-20">
+        <header className="flex-shrink-0 bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 p-4 flex items-center justify-between z-20">
           <h1 className="text-xl font-bold">AI Lecture Assistant</h1>
           <div className="text-sm text-gray-400">
             Slide {currentSlideIndex + 1} of {slides.length}

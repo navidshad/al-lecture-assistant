@@ -45,14 +45,8 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ isVisible, onClose, t
     >
       <div className={`flex flex-col h-full overflow-hidden ${isDesktop ? 'w-96' : ''}`}>
         <header className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
-          <h2 className="text-lg font-semibold">Lecture Transcript</h2>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full hover:bg-gray-700 transition-colors"
-            aria-label="Close transcript"
-          >
-            <X className="h-6 w-6" />
-          </button>
+          <h2 className="text-xl font-semibold">Lecture Transcript</h2>
+
         </header>
         <div className="flex-1 p-4 overflow-y-auto">
           <div className="space-y-6">
@@ -74,8 +68,8 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ isVisible, onClose, t
             </div>
           )}
         </div>
-        <div className="p-2 border-t border-gray-700 flex-shrink-0">
-          <form onSubmit={handleFormSubmit} className="flex items-center gap-2">
+        <div className="p-4 flex-shrink-0 flex items-center ">
+          <form onSubmit={handleFormSubmit} className="flex items-center justify-between mb-0 w-full gap-2">
             <input
               type="text"
               value={message}
