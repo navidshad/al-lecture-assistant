@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Mic, MicOff, RotateCcw, ArrowLeft, ArrowRight, MessageSquare, Power, LayoutGrid } from 'lucide-react';
+import { Mic, MicOff, RotateCcw, ArrowLeft, ArrowRight, MessageSquare, Power, LayoutGrid, Download } from 'lucide-react';
 
 interface ControlsProps {
   isMuted: boolean;
@@ -12,6 +12,8 @@ interface ControlsProps {
   isPreviousDisabled: boolean;
   onTranscriptToggle: () => void;
   onSlidesToggle: () => void;
+  onDownloadTranscript: () => void;
+  isTranscriptEmpty: boolean;
   onEndSession: () => void;
 }
 
@@ -37,16 +39,21 @@ const Controls: React.FC<ControlsProps> = ({
   isPreviousDisabled,
   onTranscriptToggle,
   onSlidesToggle,
+  onDownloadTranscript,
+  isTranscriptEmpty,
   onEndSession,
 }) => {
   return (
     <div className="flex items-center justify-between gap-4">
-       <div className="w-28 flex items-center gap-1">
+       <div className="w-40 flex items-center gap-1">
          <ControlButton onClick={onTranscriptToggle} className="bg-gray-700 text-gray-300" title="Toggle Transcript">
             <MessageSquare className="h-6 w-6" />
         </ControlButton>
          <ControlButton onClick={onSlidesToggle} className="bg-gray-700 text-gray-300" title="Toggle Slides">
             <LayoutGrid className="h-6 w-6" />
+        </ControlButton>
+         <ControlButton onClick={onDownloadTranscript} disabled={isTranscriptEmpty} className="bg-gray-700 text-gray-300" title="Download Transcript">
+            <Download className="h-6 w-6" />
         </ControlButton>
        </div>
         
@@ -68,7 +75,7 @@ const Controls: React.FC<ControlsProps> = ({
             </ControlButton>
         </div>
         
-        <div className="w-28 flex justify-end">
+        <div className="w-40 flex justify-end">
             <ControlButton onClick={onEndSession} className="bg-red-800/80 text-red-300 hover:bg-red-700" title="End Session">
                 <Power className="h-6 w-6" />
             </ControlButton>

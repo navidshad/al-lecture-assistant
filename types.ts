@@ -17,6 +17,7 @@ export enum LectureSessionState {
   LISTENING = 'LISTENING',
   ENDED = 'ENDED',
   ERROR = 'ERROR',
+  DISCONNECTED = 'DISCONNECTED',
 }
 
 export interface TranscriptEntry {

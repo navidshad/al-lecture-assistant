@@ -1,16 +1,23 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Slide, ParsedSlide } from '../types';
 import { parsePdf } from '../services/pdfUtils';
-import { UploadCloudIcon, Loader2, Globe, Volume2, Cpu } from 'lucide-react';
+import { UploadCloudIcon, Loader2, Globe, Cpu, Settings } from 'lucide-react';
 import { SUPPORTED_LANGUES } from '../langueges.static';
 import { GoogleGenAI } from '@google/genai';
+import ConfigModal from '../components/ConfigModal';
+import { logger } from '../services/logger';
 
+const LOG_SOURCE = 'IntroPage';
 
 interface IntroPageProps {
   onLectureStart: (slides: Slide[], generalInfo: string, language: string, voice: string, model: string) => void;
+  apiKey: string | null;
+  onApiKeySave: (key: string) => void;
+  onApiKeyRemove: () => void;
 }
 
 const LANGUAGE_STORAGE_KEY = 'ai-lecture-assistant-language';
+const VOICE_STORAGE_KEY = 'ai-lecture-assistant-voice';
 
 const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -50,10 +57,11 @@ const parseLecturePlanResponse = (planText: string): { generalInfo: string; slid
 }
 
 
-const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
+const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart, apiKey, onApiKeySave, onApiKeyRemove }) => {
   const [isParsing, setIsParsing] = useState(false);
   const [loadingText, setLoadingText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
   
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     try {
@@ -67,7 +75,18 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
     return 'English';
   });
 
-  const [selectedVoice, setSelectedVoice] = useState('Zephyr');
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    try {
+      const storedVoice = localStorage.getItem(VOICE_STORAGE_KEY);
+      if (storedVoice) {
+        return storedVoice;
+      }
+    } catch (e) {
+      console.error("Failed to read voice from local storage", e);
+    }
+    return 'Zephyr';
+  });
+
   const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-native-audio-preview-09-2025');
 
   useEffect(() => {
@@ -77,6 +96,14 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
       console.error("Failed to save language to local storage", e);
     }
   }, [selectedLanguage]);
+  
+  useEffect(() => {
+    try {
+      localStorage.setItem(VOICE_STORAGE_KEY, selectedVoice);
+    } catch (e) {
+      console.error("Failed to save voice to local storage", e);
+    }
+  }, [selectedVoice]);
 
   const voices = [
     { name: 'Zephyr', description: 'Friendly Male Voice' },
@@ -96,16 +123,20 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart }) => {
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      logger.log(LOG_SOURCE, 'File selected:', file.name);
       setIsParsing(true);
       setError(null);
       
       try {
         setLoadingText('Parsing your PDF for slide images...');
+        logger.debug(LOG_SOURCE, 'Starting PDF parsing...');
         const parsedSlides = await parsePdf(file);
+        logger.debug(LOG_SOURCE, `PDF parsing complete. Found ${parsedSlides.length} slides.`);
         
         setLoadingText('Generating AI lecture plan... This may take a minute.');
+        logger.debug(LOG_SOURCE, 'Starting AI lecture plan generation...');
 
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+        const ai = new GoogleGenAI({ apiKey: apiKey ?? process.env.API_KEY! });
         
         const base64Pdf = await fileToBase64(file);
         const pdfPart = {
@@ -140,7 +171,9 @@ Slide 2:
         });
         
         const lecturePlanText = response.text;
+        logger.debug(LOG_SOURCE, 'AI lecture plan received.');
         const { generalInfo, slideSummaries } = parseLecturePlanResponse(lecturePlanText);
+        logger.debug(LOG_SOURCE, 'Successfully parsed lecture plan.');
         
         const enhancedSlides: Slide[] = parsedSlides.map(parsedSlide => {
             const summary = slideSummaries.get(parsedSlide.pageNumber);
@@ -150,9 +183,11 @@ Slide 2:
             };
         });
 
+        logger.log(LOG_SOURCE, 'Successfully processed file. Starting lecture.');
         onLectureStart(enhancedSlides, generalInfo, selectedLanguage, selectedVoice, selectedModel);
 
       } catch (err) {
+        logger.error(LOG_SOURCE, 'Failed to process PDF.', err);
         setError('Failed to process PDF. The AI may be busy or the file may be invalid. Please try again.');
         console.error(err);
       } finally {
@@ -160,14 +195,24 @@ Slide 2:
         setLoadingText('');
       }
     }
-  }, [onLectureStart, selectedLanguage, selectedVoice, selectedModel]);
+  }, [onLectureStart, selectedLanguage, selectedVoice, selectedModel, apiKey]);
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-gray-200 p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-gray-200 p-4 relative">
+       <div className="absolute top-4 right-4">
+        <button
+          onClick={() => setIsConfigOpen(true)}
+          className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+          title="Settings"
+        >
+          <Settings className="h-6 w-6" />
+        </button>
+      </div>
+
       <h1 className="text-4xl font-bold mb-2 text-white">AI Lecture Assistant</h1>
       <p className="text-lg text-gray-400 mb-8">Upload a PDF and select your preferences to begin an interactive lecture.</p>
       
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8 w-full max-w-4xl">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8 w-full max-w-2xl">
           <div>
               <label htmlFor="language-select" className="block text-sm font-medium text-gray-400 mb-2 text-center">
                   Lecture Language
@@ -187,25 +232,6 @@ Slide 2:
               </div>
           </div>
           
-          <div>
-              <label htmlFor="voice-select" className="block text-sm font-medium text-gray-400 mb-2 text-center">
-                  AI Lecturer Voice
-              </label>
-              <div className="relative">
-                  <Volume2 className="pointer-events-none absolute top-1/2 left-3 h-5 w-5 -translate-y-1/2 text-gray-500" />
-                  <select
-                      id="voice-select"
-                      value={selectedVoice}
-                      onChange={(e) => setSelectedVoice(e.target.value)}
-                      className="w-full appearance-none rounded-lg border border-gray-600 bg-gray-700 py-2.5 pl-10 pr-4 text-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                      {voices.map(voice => (
-                          <option key={voice.name} value={voice.name}>{voice.description}</option>
-                      ))}
-                  </select>
-              </div>
-          </div>
-
           <div>
               <label htmlFor="model-select" className="block text-sm font-medium text-gray-400 mb-2 text-center">
                   AI Model
@@ -248,6 +274,17 @@ Slide 2:
         </label>
         {error && <p className="text-red-500 mt-4 text-center">{error}</p>}
       </div>
+
+      <ConfigModal 
+        isOpen={isConfigOpen}
+        onClose={() => setIsConfigOpen(false)}
+        selectedVoice={selectedVoice}
+        onVoiceChange={setSelectedVoice}
+        voices={voices}
+        currentApiKey={apiKey}
+        onApiKeySave={onApiKeySave}
+        onApiKeyRemove={onApiKeyRemove}
+      />
     </div>
   );
 };

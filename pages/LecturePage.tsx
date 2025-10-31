@@ -6,6 +6,9 @@ import SlideViewer from '../components/SlideViewer';
 import Controls from '../components/Controls';
 import TranscriptPanel from '../components/TranscriptPanel';
 import { Power, PlayCircle } from 'lucide-react';
+import { logger } from '../services/logger';
+
+const LOG_SOURCE = 'LecturePage';
 
 interface LecturePageProps {
   slides: Slide[];
@@ -14,10 +17,11 @@ interface LecturePageProps {
   selectedLanguage: string;
   selectedVoice: string;
   selectedModel: string;
+  apiKey: string | null;
 }
 
-const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSession, selectedLanguage, selectedVoice, selectedModel }) => {
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSession, selectedLanguage, selectedVoice, selectedModel, apiKey }) => {
+  const [currentSlideIndex, _setCurrentSlideIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [hasLectureStarted, setHasLectureStarted] = useState(false);
@@ -27,7 +31,18 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
 
   const { showToast } = useToast();
 
+  const setCurrentSlideIndex = (updater: React.SetStateAction<number>) => {
+    _setCurrentSlideIndex(prevIndex => {
+        const newIndex = typeof updater === 'function' ? updater(prevIndex) : updater;
+        if (prevIndex !== newIndex) {
+            logger.debug(LOG_SOURCE, `Slide index changing from ${prevIndex} to ${newIndex}`);
+        }
+        return newIndex;
+    });
+  };
+
   useEffect(() => {
+    logger.log(LOG_SOURCE, 'Component mounted with props:', { slidesCount: slides.length, generalInfo, selectedLanguage, selectedVoice, selectedModel });
     const checkDesktop = () => {
       if (window.innerWidth >= 768) {
         setIsSlidesVisible(true);
@@ -63,27 +78,32 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
   }, []);
   
   const handleSlideChangeFromAI = useCallback((slideNumber: number) => {
+    logger.log(LOG_SOURCE, `AI requested slide change to ${slideNumber}`);
     const newIndex = slideNumber - 1;
     if (newIndex >= 0 && newIndex < slides.length) {
       setCurrentSlideIndex(newIndex);
     } else {
-      console.warn(`AI tried to switch to an invalid slide number: ${slideNumber}`);
+      logger.warn(LOG_SOURCE, `AI tried to switch to an invalid slide number: ${slideNumber}`);
     }
   }, [slides.length]);
 
   const { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, sendSlideImageContext } = useGeminiLive({
     slides,
     generalInfo,
+    transcript,
     setTranscript,
     isMuted,
     selectedLanguage,
     selectedVoice,
     selectedModel,
     onSlideChange: handleSlideChangeFromAI,
+    apiKey,
+    currentSlideIndex,
   });
 
   useEffect(() => {
     if (error) {
+      logger.error(LOG_SOURCE, 'Received error from useGeminiLive hook:', error);
       showToast(error, 'error');
     }
   }, [error, showToast]);
@@ -96,16 +116,24 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
       slides[currentSlideIndex] &&
       (sessionState === LectureSessionState.LECTURING || sessionState === LectureSessionState.LISTENING || sessionState === LectureSessionState.READY)
     ) {
+      logger.debug(LOG_SOURCE, `Slide changed to ${currentSlideIndex + 1}. Sending image context.`);
       sendSlideImageContext(slides[currentSlideIndex]);
     }
   }, [currentSlideIndex, hasLectureStarted, sendSlideImageContext, slides, sessionState]);
 
   const handleStartLecture = () => {
+    logger.log(LOG_SOURCE, 'handleStartLecture called.');
     setHasLectureStarted(true);
     startLecture();
   };
 
+  const handleReconnect = useCallback(() => {
+    logger.log(LOG_SOURCE, 'handleReconnect called.');
+    startLecture();
+  }, [startLecture]);
+
   const handleNext = useCallback(() => {
+    logger.debug(LOG_SOURCE, 'handleNext called.');
     if (currentSlideIndex < slides.length - 1) {
       // Optimistically update UI, AI will confirm via function call
       setCurrentSlideIndex(prev => prev + 1);
@@ -114,6 +142,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
   }, [currentSlideIndex, slides.length, next]);
 
   const handlePrevious = useCallback(() => {
+    logger.debug(LOG_SOURCE, 'handlePrevious called.');
     if (currentSlideIndex > 0) {
       // Optimistically update UI, AI will confirm via function call
       setCurrentSlideIndex(prev => prev - 1);
@@ -122,6 +151,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
   }, [currentSlideIndex, previous]);
 
   const handleSelectSlide = useCallback((index: number) => {
+    logger.debug(LOG_SOURCE, `handleSelectSlide called for index ${index}.`);
     if (index !== currentSlideIndex) {
       setCurrentSlideIndex(index);
       goToSlide(index + 1);
@@ -129,6 +159,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
   }, [currentSlideIndex, goToSlide]);
 
   const handleSendMessage = useCallback((message: string) => {
+    logger.debug(LOG_SOURCE, 'handleSendMessage called.');
     if (!sendTextMessage) return;
     
     // Add user message to transcript immediately
@@ -139,9 +170,34 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
   }, [sendTextMessage]);
   
   const handleEndSession = () => {
+    logger.log(LOG_SOURCE, 'handleEndSession called.');
     end();
     onEndSession();
   };
+
+  const handleDownloadTranscript = useCallback(() => {
+    if (transcript.length === 0 && !generalInfo) return;
+
+    const header = `AI Lecture Transcript\n=====================\n\n`;
+    const overview = `Presentation Overview:\n${generalInfo}\n\n---------------------\nConversation History:\n---------------------\n\n`;
+    
+    const conversation = transcript
+        .map(entry => `${entry.speaker === 'user' ? 'User' : 'AI Lecturer'}: ${entry.text}`)
+        .join('\n\n');
+
+    const fileContent = header + overview + conversation;
+
+    const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'ai-lecture-transcript.txt';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    logger.log(LOG_SOURCE, 'Transcript downloaded.');
+  }, [transcript, generalInfo]);
 
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden">
@@ -173,6 +229,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
                 slide={slides[currentSlideIndex]} 
                 sessionState={sessionState}
                 error={error}
+                onReconnect={handleReconnect}
               />
             </div>
 
@@ -232,6 +289,8 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
               isPreviousDisabled={currentSlideIndex <= 0}
               onTranscriptToggle={handleTranscriptToggle}
               onSlidesToggle={handleSlidesToggle}
+              onDownloadTranscript={handleDownloadTranscript}
+              isTranscriptEmpty={transcript.length === 0}
               onEndSession={handleEndSession}
             />
           ) : (
