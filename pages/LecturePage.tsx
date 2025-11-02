@@ -19,9 +19,10 @@ interface LecturePageProps {
   selectedVoice: string;
   selectedModel: string;
   apiKey: string | null;
+  fileName: string;
 }
 
-const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSession, selectedLanguage, selectedVoice, selectedModel, apiKey }) => {
+const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSession, selectedLanguage, selectedVoice, selectedModel, apiKey, fileName }) => {
   const [currentSlideIndex, _setCurrentSlideIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -209,13 +210,16 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'ai-lecture-transcript.txt';
+
+    const baseFileName = fileName.replace(/\.pdf$/i, '');
+    link.download = `${baseFileName}-transcript.txt`;
+    
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     logger.log(LOG_SOURCE, 'Transcript downloaded.');
-  }, [transcript, generalInfo]);
+  }, [transcript, generalInfo, fileName]);
   
   const tabButtonClasses = (tabName: 'slide' | 'canvas') => 
     `px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none ${

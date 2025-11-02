@@ -10,7 +10,7 @@ import { logger } from '../services/logger';
 const LOG_SOURCE = 'IntroPage';
 
 interface IntroPageProps {
-  onLectureStart: (slides: Slide[], generalInfo: string, language: string, voice: string, model: string) => void;
+  onLectureStart: (slides: Slide[], generalInfo: string, language: string, voice: string, model: string, fileName: string) => void;
   apiKey: string | null;
   onApiKeySave: (key: string) => void;
   onApiKeyRemove: () => void;
@@ -184,7 +184,7 @@ Slide 2:
         });
 
         logger.log(LOG_SOURCE, 'Successfully processed file. Starting lecture.');
-        onLectureStart(enhancedSlides, generalInfo, selectedLanguage, selectedVoice, selectedModel);
+        onLectureStart(enhancedSlides, generalInfo, selectedLanguage, selectedVoice, selectedModel, file.name);
 
       } catch (err) {
         logger.error(LOG_SOURCE, 'Failed to process PDF.', err);

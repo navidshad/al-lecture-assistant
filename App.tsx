@@ -20,18 +20,21 @@ function AppContent() {
     voice: 'Zephyr',
     model: 'gemini-2.5-flash-native-audio-preview-09-2025'
   });
+  const [fileName, setFileName] = useState('');
 
-  const handleLectureStart = useCallback((parsedSlides: Slide[], generalInfo: string, language: string, voice: string, model: string) => {
+  const handleLectureStart = useCallback((parsedSlides: Slide[], generalInfo: string, language: string, voice: string, model: string, uploadedFileName: string) => {
     logger.log(LOG_SOURCE, 'Lecture starting. Setting state for lecture page.');
     setSlides(parsedSlides);
     setGeneralInfo(generalInfo);
     setLectureConfig({ language, voice, model });
+    setFileName(uploadedFileName);
   }, []);
 
   const handleEndSession = useCallback(() => {
     logger.log(LOG_SOURCE, 'Lecture ending. Clearing state.');
     setSlides([]);
     setGeneralInfo('');
+    setFileName('');
   }, []);
 
   useEffect(() => {
@@ -67,6 +70,7 @@ function AppContent() {
       selectedVoice={lectureConfig.voice} 
       selectedModel={lectureConfig.model} 
       apiKey={apiKey}
+      fileName={fileName}
     />
   );
 }
