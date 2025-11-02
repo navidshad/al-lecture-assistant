@@ -127,7 +127,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
     setActiveTab('canvas');
   }, [currentSlideIndex]);
 
-  const { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, sendSlideImageContext } = useGeminiLive({
+  const { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, requestExplanation } = useGeminiLive({
     slides: slides,
     generalInfo: session.generalInfo,
     transcript,
@@ -148,19 +148,6 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
       showToast(error, 'error');
     }
   }, [error, showToast]);
-  
-  // Send the image context whenever the slide changes, but only if the lecture is active.
-  useEffect(() => {
-    if (
-      hasLectureStarted &&
-      sendSlideImageContext &&
-      slides[currentSlideIndex] &&
-      (sessionState === LectureSessionState.LECTURING || sessionState === LectureSessionState.LISTENING || sessionState === LectureSessionState.READY)
-    ) {
-      logger.debug(LOG_SOURCE, `Slide changed to ${currentSlideIndex + 1}. Sending image context.`);
-      sendSlideImageContext(slides[currentSlideIndex]);
-    }
-  }, [currentSlideIndex, hasLectureStarted, sendSlideImageContext, slides, sessionState]);
   
   // Reset to slide view whenever the slide changes
   useEffect(() => {
@@ -206,20 +193,23 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
   const handleSelectSlide = useCallback((index: number) => {
     logger.debug(LOG_SOURCE, `handleSelectSlide called for index ${index}.`);
     if (index !== currentSlideIndex) {
-      goToSlide(index + 1);
+      setCurrentSlideIndex(index);
+      const slide = slides[index];
+      if (slide && requestExplanation) {
+        requestExplanation(slide);
+      }
     }
-  }, [currentSlideIndex, goToSlide]);
+  }, [currentSlideIndex, slides, requestExplanation]);
 
   const handleSendMessage = useCallback((message: string) => {
-    logger.debug(LOG_SOURCE, 'handleSendMessage called.');
+    logger.debug(LOG_SOURCE, 'handleSendMessage called for typed text.');
     if (!sendTextMessage) return;
     
-    // Add user message to transcript immediately
+    // Optimistically add the user's typed message to the transcript.
+    // The `inputTranscription` event is for voice input, not for messages sent via this text input.
     setTranscript(prev => [...prev, { speaker: 'user', text: message }]);
-    
-    // Send message to AI
     sendTextMessage(message);
-  }, [sendTextMessage]);
+  }, [sendTextMessage, setTranscript]);
   
   const handleEndSession = useCallback(async () => {
     logger.log(LOG_SOURCE, 'handleEndSession called. Forcing final save.');

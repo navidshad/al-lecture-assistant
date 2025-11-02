@@ -173,6 +173,13 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
     }
   }, []);
 
+  const requestExplanation = useCallback((slide: Slide) => {
+    logger.debug(LOG_SOURCE, `requestExplanation called for slide ${slide.pageNumber}`);
+    sendSlideImageContext(slide);
+    const contextMessage = `**USER ACTION: MANUAL SLIDE CHANGE**\nThe user has manually selected and is now viewing slide number ${slide.pageNumber}. Your task is to explain the content of this new slide.`;
+    sendTextMessage(contextMessage);
+  }, [sendSlideImageContext, sendTextMessage]);
+
 
   const startLecture = useCallback(() => {
     logger.log(LOG_SOURCE, 'startLecture() called.');
@@ -207,11 +214,10 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
         You will be provided with a summary for each slide. You will also receive an image of the current slide when it becomes active. You may also receive text context about content on a 'canvas' for the current slide.
 
         **Workflow:**
-        1. Greet the user in ${selectedLanguage}.
-        2. Call 'setActiveSlide' for slide 1 to begin.
-        3. For each slide, you MUST use the provided summary, the visual information from the slide's image, AND any provided canvas content to deliver a comprehensive explanation. Describe charts, diagrams, and key visual elements.
-        4. After explaining a slide, wait for the user to proceed. Say something like "Let me know when you're ready to continue." to prompt the user.
-        5. If the user asks a question, answer it based on the lecture plan and slide content.
+        1. The application will set the first slide. Greet the user in ${selectedLanguage} and begin by explaining the content of slide 1.
+        2. For each slide, you MUST use the provided summary, the visual information from the slide's image, AND any provided canvas content to deliver a comprehensive explanation. Describe charts, diagrams, and key visual elements.
+        3. After explaining a slide, wait for the user to proceed. Say something like "Let me know when you're ready to continue." to prompt the user.
+        4. If the user asks a question, answer it based on the lecture plan and slide content.
 
         **Rules:**
         - All speech must be in ${selectedLanguage}.
@@ -219,11 +225,11 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
         - CRITICAL: After successfully changing slides via 'setActiveSlide', you MUST immediately start explaining the new slide's content without waiting for any user prompt.
         - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Just start explaining the new content of the requested slide.
         - When presenting tabular data on the canvas, you MUST use a 'contentBlock' with type 'table'. Do not put tables inside 'markdown' blocks.
+        - **Function Call Response Handling:** After a tool call is confirmed as successful, do not repeat your previous statement. For example, if you state you are rendering a diagram and the \`renderCanvas\` tool call is successful, do not announce it again. Acknowledge the success silently and continue the conversation naturally.
         
         **Canvas for Clarification (Advanced):**
         - You have a powerful tool: 'renderCanvas'. Use it proactively to enhance your explanations when the slide content is not enough, or when the user asks a question that would benefit from a visual aid.
         - This function accepts a JSON object with a single key, 'contentBlocks', which is an array of objects.
-        - Each object in the array represents a piece of content to be displayed. It MUST have a 'type' and a 'content' field.
         
         - **Supported 'type' values are:**
           1.  'markdown': For formatted text, lists, and simple text. The 'content' should be a Markdown string.
@@ -305,22 +311,30 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
                 sendSlideImageContext(slides[currentSlideIndex]);
                 
                 // Construct a more direct and forceful prompt for the AI to resume.
-                const contextMessage = `**URGENT INSTRUCTION: RESUME LECTURE**
-Your previous session was disconnected and has just been reconnected. You must ignore the initial greeting and setup instructions from your system prompt.
+                const contextMessage = `**URGENT INSTRUCTION: RESUME LECTURE FROM DISCONNECT**
+Your session has just been reconnected. All previous state is reset.
 
-**Current State:**
-- You are on **Slide ${currentSlideNumber}**.
-- The recent conversation was:
+**CRITICAL CONTEXT:**
+- The user is now viewing **Slide ${currentSlideNumber}**. The slide's image has been provided to you.
+- The recent conversation history is:
 ${recentHistory}
 
-**Your immediate task:**
-Continue the lecture from exactly where you left off. If you were in the middle of explaining something, pick it up. If you were waiting for the user, prompt them again. **You must start speaking now.**`;
+**YOUR IMMEDIATE TASK:**
+Resume the lecture from exactly where you left off on Slide ${currentSlideNumber}. Do not greet the user or re-introduce the topic. Start explaining the content of the current slide immediately.`;
 
                 sendTextMessage(contextMessage);
             } else {
-                const initialMessage = `Here are the summaries for each slide:\n\n${lecturePlanForAI}\n\nNow, begin the lecture by greeting the user and explaining slide 1.`;
-                logger.debug(LOG_SOURCE, 'Sending initial context to AI.');
-                sendTextMessage(initialMessage);
+                // For a new lecture, send context and instructions separately for clarity.
+                sendSlideImageContext(slides[0]);
+
+                // First, send the lecture plan as context.
+                const contextMessage = `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`;
+                sendTextMessage(contextMessage);
+
+                // Then, send a clear instruction to begin.
+                const instructionMessage = `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`;
+                sendTextMessage(instructionMessage);
+                logger.debug(LOG_SOURCE, 'Sent initial context and instruction to AI for a new lecture.');
             }
 
           } catch (err) {
@@ -346,6 +360,7 @@ Continue the lecture from exactly where you left off. If you were in the middle 
                   logger.log(LOG_SOURCE, `Processing setActiveSlide function call for slide number: ${slideNumber}`);
                   if (slideNumber >= 1 && slideNumber <= slides.length) {
                     onSlideChange(slideNumber);
+                    sendSlideImageContext(slides[slideNumber - 1]);
                     sessionPromise.then((session) => {
                       session.sendToolResponse({
                         functionResponses: {
@@ -368,18 +383,51 @@ Continue the lecture from exactly where you left off. If you were in the middle 
                     });
                   }
                 } else if (fc.name === 'renderCanvas') {
-                    const contentBlocks = fc.args.contentBlocks as CanvasBlock[];
-                    logger.log(LOG_SOURCE, `Processing renderCanvas function call.`);
-                    onRenderCanvas(contentBlocks);
-                    sessionPromise.then((session) => {
-                      session.sendToolResponse({
-                        functionResponses: {
-                          id: fc.id,
-                          name: fc.name,
-                          response: { result: `OK. Canvas content has been rendered.` },
-                        }
-                      });
-                    });
+                    let parsedArgs = fc.args;
+                    if (typeof parsedArgs === 'string') {
+                      try {
+                        parsedArgs = JSON.parse(parsedArgs);
+                      } catch (e) {
+                        logger.error(LOG_SOURCE, "Failed to parse stringified function call arguments for renderCanvas", e);
+                        sessionPromise.then((session) => {
+                          session.sendToolResponse({
+                            functionResponses: {
+                              id: fc.id,
+                              name: fc.name,
+                              response: { error: `Invalid arguments format: failed to parse JSON string.` },
+                            }
+                          });
+                        });
+                        continue;
+                      }
+                    }
+
+                    const contentBlocks = parsedArgs?.contentBlocks as CanvasBlock[];
+                    
+                    if (contentBlocks && Array.isArray(contentBlocks)) {
+                        logger.log(LOG_SOURCE, `Processing renderCanvas function call.`);
+                        onRenderCanvas(contentBlocks);
+                        sessionPromise.then((session) => {
+                          session.sendToolResponse({
+                            functionResponses: {
+                              id: fc.id,
+                              name: fc.name,
+                              response: { result: `OK. Canvas content has been rendered.` },
+                            }
+                          });
+                        });
+                    } else {
+                        logger.error(LOG_SOURCE, `Invalid 'contentBlocks' received in renderCanvas call`, parsedArgs);
+                        sessionPromise.then((session) => {
+                          session.sendToolResponse({
+                            functionResponses: {
+                              id: fc.id,
+                              name: fc.name,
+                              response: { error: `Invalid arguments: 'contentBlocks' was missing or not an array.` },
+                            }
+                          });
+                        });
+                    }
                 }
               }
             }
@@ -480,5 +528,5 @@ Continue the lecture from exactly where you left off. If you were in the middle 
     };
   }, [end]);
 
-  return { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, sendSlideImageContext };
+  return { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, requestExplanation };
 };
