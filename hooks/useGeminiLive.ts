@@ -149,17 +149,24 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
   const sendSlideImageContext = useCallback((slide: Slide) => {
     logger.debug(LOG_SOURCE, `sendSlideImageContext called for slide ${slide.pageNumber}`);
     if (sessionPromiseRef.current) {
-      const base64Data = slide.imageDataUrl.split(',')[1];
-      if (!base64Data) {
-        logger.error(LOG_SOURCE, "Could not extract base64 data from slide image");
-        return;
-      }
-      const imageBlob: GenAI_Blob = {
-        data: base64Data,
-        mimeType: 'image/png',
-      };
       sessionPromiseRef.current.then(session => {
+        const base64Data = slide.imageDataUrl.split(',')[1];
+        if (!base64Data) {
+          logger.error(LOG_SOURCE, "Could not extract base64 data from slide image");
+          return;
+        }
+        const imageBlob: GenAI_Blob = {
+          data: base64Data,
+          mimeType: 'image/png',
+        };
+        // Send image first
         session.sendRealtimeInput({ media: imageBlob });
+
+        // If there's canvas content, send it as text context
+        if (slide.canvasContent && slide.canvasContent.length > 0) {
+          const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(slide.canvasContent)}`;
+          session.sendRealtimeInput({ text: canvasText });
+        }
       });
     } else {
         logger.warn(LOG_SOURCE, 'sendSlideImageContext called but session promise is null.');
@@ -197,12 +204,12 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
         ${generalInfo}
         
         **Context:**
-        You will be provided with a summary for each slide. You will also receive an image of the current slide when it becomes active.
+        You will be provided with a summary for each slide. You will also receive an image of the current slide when it becomes active. You may also receive text context about content on a 'canvas' for the current slide.
 
         **Workflow:**
         1. Greet the user in ${selectedLanguage}.
         2. Call 'setActiveSlide' for slide 1 to begin.
-        3. For each slide, you MUST use the provided summary AND the visual information from the slide's image to deliver a comprehensive explanation. Describe charts, diagrams, and key visual elements seen in the image.
+        3. For each slide, you MUST use the provided summary, the visual information from the slide's image, AND any provided canvas content to deliver a comprehensive explanation. Describe charts, diagrams, and key visual elements.
         4. After explaining a slide, wait for the user to proceed. Say something like "Let me know when you're ready to continue." to prompt the user.
         5. If the user asks a question, answer it based on the lecture plan and slide content.
 
@@ -450,7 +457,7 @@ Continue the lecture from exactly where you left off. If you were in the middle 
 
   const replay = useCallback(() => {
     logger.debug(LOG_SOURCE, 'replay() called.');
-    sendTextMessage("Please repeat your explanation for the current slide.");
+    sendTextMessage("Please repeat your explanation for this slide.");
   }, [sendTextMessage]);
   const next = useCallback(() => {
     logger.debug(LOG_SOURCE, 'next() called.');
@@ -458,7 +465,7 @@ Continue the lecture from exactly where you left off. If you were in the middle 
   }, [sendTextMessage]);
   const previous = useCallback(() => {
     logger.debug(LOG_SOURCE, 'previous() called.');
-    sendTextMessage("Go back to the previous slide and explain it.");
+    sendTextMessage("Go to the previous slide and explain it.");
   }, [sendTextMessage]);
   const goToSlide = useCallback((slideNumber: number) => {
     logger.debug(LOG_SOURCE, `goToSlide(${slideNumber}) called.`);

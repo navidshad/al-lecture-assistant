@@ -19,6 +19,7 @@ interface LecturePageProps {
 }
 
 const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey }) => {
+  const [slides, setSlides] = useState<Slide[]>(session.slides);
   const [currentSlideIndex, _setCurrentSlideIndex] = useState(session.currentSlideIndex);
   const [isMuted, setIsMuted] = useState(true);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>(session.transcript);
@@ -28,7 +29,6 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
   const [isSlidesVisible, setIsSlidesVisible] = useState(false);
   
   const [activeTab, setActiveTab] = useState<'slide' | 'canvas'>('slide');
-  const [canvasContent, setCanvasContent] = useState<CanvasBlock[]>([]);
 
   const { showToast } = useToast();
 
@@ -36,6 +36,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
     logger.debug(LOG_SOURCE, 'Saving session state to DB.');
     const updatedSession: LectureSession = {
         ...session,
+        slides: slides,
         transcript: transcript,
         currentSlideIndex: currentSlideIndex,
     };
@@ -44,7 +45,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
     } catch (e) {
         logger.error(LOG_SOURCE, 'Failed to save session state', e);
     }
-  }, [session, transcript, currentSlideIndex]);
+  }, [session, slides, transcript, currentSlideIndex]);
 
   useEffect(() => {
     // Debounce saving the session state. This runs whenever the saveSessionState
@@ -103,21 +104,31 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
   const handleSlideChangeFromAI = useCallback((slideNumber: number) => {
     logger.log(LOG_SOURCE, `AI requested slide change to ${slideNumber}`);
     const newIndex = slideNumber - 1;
-    if (newIndex >= 0 && newIndex < session.slides.length) {
+    if (newIndex >= 0 && newIndex < slides.length) {
       setCurrentSlideIndex(newIndex);
     } else {
       logger.warn(LOG_SOURCE, `AI tried to switch to an invalid slide number: ${slideNumber}`);
     }
-  }, [session.slides.length]);
+  }, [slides.length]);
 
   const handleRenderCanvas = useCallback((contentBlocks: CanvasBlock[]) => {
     logger.log(LOG_SOURCE, 'Received request to render canvas content.');
-    setCanvasContent(contentBlocks);
+    setSlides(prevSlides => {
+      const newSlides = [...prevSlides];
+      const currentSlide = newSlides[currentSlideIndex];
+      if (currentSlide) {
+        newSlides[currentSlideIndex] = {
+          ...currentSlide,
+          canvasContent: contentBlocks,
+        };
+      }
+      return newSlides;
+    });
     setActiveTab('canvas');
-  }, []);
+  }, [currentSlideIndex]);
 
   const { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, sendSlideImageContext } = useGeminiLive({
-    slides: session.slides,
+    slides: slides,
     generalInfo: session.generalInfo,
     transcript,
     setTranscript,
@@ -143,13 +154,13 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
     if (
       hasLectureStarted &&
       sendSlideImageContext &&
-      session.slides[currentSlideIndex] &&
+      slides[currentSlideIndex] &&
       (sessionState === LectureSessionState.LECTURING || sessionState === LectureSessionState.LISTENING || sessionState === LectureSessionState.READY)
     ) {
       logger.debug(LOG_SOURCE, `Slide changed to ${currentSlideIndex + 1}. Sending image context.`);
-      sendSlideImageContext(session.slides[currentSlideIndex]);
+      sendSlideImageContext(slides[currentSlideIndex]);
     }
-  }, [currentSlideIndex, hasLectureStarted, sendSlideImageContext, session.slides, sessionState]);
+  }, [currentSlideIndex, hasLectureStarted, sendSlideImageContext, slides, sessionState]);
   
   // Reset to slide view whenever the slide changes
   useEffect(() => {
@@ -180,18 +191,14 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
 
   const handleNext = useCallback(() => {
     logger.debug(LOG_SOURCE, 'handleNext called.');
-    if (currentSlideIndex < session.slides.length - 1) {
-      // Optimistically update UI, AI will confirm via function call
-      setCurrentSlideIndex(prev => prev + 1);
+    if (currentSlideIndex < slides.length - 1) {
       next();
     }
-  }, [currentSlideIndex, session.slides.length, next]);
+  }, [currentSlideIndex, slides.length, next]);
 
   const handlePrevious = useCallback(() => {
     logger.debug(LOG_SOURCE, 'handlePrevious called.');
     if (currentSlideIndex > 0) {
-      // Optimistically update UI, AI will confirm via function call
-      setCurrentSlideIndex(prev => prev - 1);
       previous();
     }
   }, [currentSlideIndex, previous]);
@@ -199,7 +206,6 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
   const handleSelectSlide = useCallback((index: number) => {
     logger.debug(LOG_SOURCE, `handleSelectSlide called for index ${index}.`);
     if (index !== currentSlideIndex) {
-      setCurrentSlideIndex(index);
       goToSlide(index + 1);
     }
   }, [currentSlideIndex, goToSlide]);
@@ -256,6 +262,8 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
         : 'text-gray-400 border-b-2 border-transparent hover:bg-gray-700/50 hover:text-gray-200'
     }`;
 
+  const currentCanvasContent = slides[currentSlideIndex]?.canvasContent || [];
+
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden">
       {/* Desktop Left Transcript Panel */}
@@ -275,7 +283,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
         <header className="flex-shrink-0 bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 p-4 flex items-center justify-between z-20">
           <h1 className="text-xl font-bold truncate pr-4" title={session.fileName}>{session.fileName}</h1>
           <div className="text-sm text-gray-400 flex-shrink-0">
-            Slide {currentSlideIndex + 1} of {session.slides.length}
+            Slide {currentSlideIndex + 1} of {slides.length}
           </div>
         </header>
 
@@ -300,14 +308,14 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
               <div className="flex-1 min-h-0 pt-4">
                 <div className={`${activeTab === 'slide' ? 'block' : 'hidden'} w-full h-full`}>
                    <SlideViewer 
-                    slide={session.slides[currentSlideIndex]} 
+                    slide={slides[currentSlideIndex]} 
                     sessionState={sessionState}
                     error={error}
                     onReconnect={handleReconnect}
                   />
                 </div>
                 <div className={`${activeTab === 'canvas' ? 'block' : 'hidden'} w-full h-full`}>
-                    <CanvasViewer content={canvasContent} />
+                    <CanvasViewer content={currentCanvasContent} />
                 </div>
               </div>
             </div>
@@ -327,7 +335,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
             {/* Mobile Slides Overview Panel */}
             <div className={`md:hidden overflow-hidden transition-all duration-300 ease-in-out ${isSlidesVisible ? 'h-36 mt-4' : 'h-0'}`}>
               <div className="h-full bg-gray-800/50 rounded-lg border border-gray-700 p-2 overflow-x-auto flex items-center space-x-2">
-                {session.slides.map((slide, index) => (
+                {slides.map((slide, index) => (
                   <div
                     key={slide.pageNumber}
                     onClick={() => handleSelectSlide(index)}
@@ -364,7 +372,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
               onReplay={replay}
               onNext={handleNext}
               onPrevious={handlePrevious}
-              isNextDisabled={currentSlideIndex >= session.slides.length - 1}
+              isNextDisabled={currentSlideIndex >= slides.length - 1}
               isPreviousDisabled={currentSlideIndex <= 0}
               onTranscriptToggle={handleTranscriptToggle}
               onSlidesToggle={handleSlidesToggle}
@@ -392,7 +400,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
           <>
             <h2 className="text-sm font-semibold text-gray-400 p-2 flex-shrink-0">Slides</h2>
             <div className="flex-1 space-y-2 overflow-y-auto">
-              {session.slides.map((slide, index) => (
+              {slides.map((slide, index) => (
                 <div
                   key={slide.pageNumber}
                   onClick={() => handleSelectSlide(index)}

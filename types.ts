@@ -6,6 +6,7 @@ export interface ParsedSlide {
 
 export interface Slide extends ParsedSlide {
   summary: string;
+  canvasContent?: CanvasBlock[];
 }
 
 export interface LectureConfig {
