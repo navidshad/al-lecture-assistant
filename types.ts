@@ -24,3 +24,10 @@ export interface TranscriptEntry {
   speaker: 'user' | 'ai';
   text: string;
 }
+
+export type CanvasBlockType = 'markdown' | 'diagram' | 'ascii' | 'table';
+
+export interface CanvasBlock {
+  type: CanvasBlockType;
+  content: string;
+}

@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Slide, TranscriptEntry, LectureSessionState } from '../types';
+import { Slide, TranscriptEntry, LectureSessionState, CanvasBlock } from '../types';
 import { useGeminiLive } from '../hooks/useGeminiLive';
 import { useToast } from '../hooks/useToast';
 import SlideViewer from '../components/SlideViewer';
+import CanvasViewer from '../components/CanvasViewer';
 import Controls from '../components/Controls';
 import TranscriptPanel from '../components/TranscriptPanel';
 import { Power, PlayCircle } from 'lucide-react';
@@ -28,6 +29,9 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
   
   const [isTranscriptVisible, setIsTranscriptVisible] = useState(false);
   const [isSlidesVisible, setIsSlidesVisible] = useState(false);
+  
+  const [activeTab, setActiveTab] = useState<'slide' | 'canvas'>('slide');
+  const [canvasContent, setCanvasContent] = useState<CanvasBlock[]>([]);
 
   const { showToast } = useToast();
 
@@ -87,6 +91,12 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
     }
   }, [slides.length]);
 
+  const handleRenderCanvas = useCallback((contentBlocks: CanvasBlock[]) => {
+    logger.log(LOG_SOURCE, 'Received request to render canvas content.');
+    setCanvasContent(contentBlocks);
+    setActiveTab('canvas');
+  }, []);
+
   const { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, sendSlideImageContext } = useGeminiLive({
     slides,
     generalInfo,
@@ -97,6 +107,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
     selectedVoice,
     selectedModel,
     onSlideChange: handleSlideChangeFromAI,
+    onRenderCanvas: handleRenderCanvas,
     apiKey,
     currentSlideIndex,
   });
@@ -120,6 +131,13 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
       sendSlideImageContext(slides[currentSlideIndex]);
     }
   }, [currentSlideIndex, hasLectureStarted, sendSlideImageContext, slides, sessionState]);
+  
+  // Reset to slide view whenever the slide changes
+  useEffect(() => {
+      logger.debug(LOG_SOURCE, `Slide index changed to ${currentSlideIndex}, resetting tab to 'slide'.`);
+      setActiveTab('slide');
+  }, [currentSlideIndex]);
+
 
   const handleStartLecture = () => {
     logger.log(LOG_SOURCE, 'handleStartLecture called.');
@@ -198,6 +216,13 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
     URL.revokeObjectURL(url);
     logger.log(LOG_SOURCE, 'Transcript downloaded.');
   }, [transcript, generalInfo]);
+  
+  const tabButtonClasses = (tabName: 'slide' | 'canvas') => 
+    `px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none ${
+      activeTab === tabName 
+        ? 'text-blue-400 border-b-2 border-blue-400' 
+        : 'text-gray-400 border-b-2 border-transparent hover:bg-gray-700/50 hover:text-gray-200'
+    }`;
 
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden">
@@ -224,13 +249,35 @@ const LecturePage: React.FC<LecturePageProps> = ({ slides, generalInfo, onEndSes
 
         <div className="flex-1 flex flex-col relative overflow-hidden">
           <main className="flex-1 flex flex-col p-4 md:p-8 overflow-hidden">
-            <div className="flex-1 min-h-0">
-              <SlideViewer 
-                slide={slides[currentSlideIndex]} 
-                sessionState={sessionState}
-                error={error}
-                onReconnect={handleReconnect}
-              />
+             <div className="flex-1 min-h-0 flex flex-col">
+              {/* Tab buttons */}
+              <div className="flex-shrink-0">
+                <div className="border-b border-gray-700">
+                  <nav className="-mb-px flex space-x-2" aria-label="Tabs">
+                    <button onClick={() => setActiveTab('slide')} className={tabButtonClasses('slide')}>
+                      Slide
+                    </button>
+                    <button onClick={() => setActiveTab('canvas')} className={tabButtonClasses('canvas')}>
+                      Canvas
+                    </button>
+                  </nav>
+                </div>
+              </div>
+
+              {/* Tab content */}
+              <div className="flex-1 min-h-0 pt-4">
+                <div className={`${activeTab === 'slide' ? 'block' : 'hidden'} w-full h-full`}>
+                   <SlideViewer 
+                    slide={slides[currentSlideIndex]} 
+                    sessionState={sessionState}
+                    error={error}
+                    onReconnect={handleReconnect}
+                  />
+                </div>
+                <div className={`${activeTab === 'canvas' ? 'block' : 'hidden'} w-full h-full`}>
+                    <CanvasViewer content={canvasContent} />
+                </div>
+              </div>
             </div>
 
             {/* Mobile Transcript Panel */}

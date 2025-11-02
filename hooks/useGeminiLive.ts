@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, Dispatch, SetStateAction } from 'react';
 // FIX: Removed `LiveSession` as it is not an exported member of '@google/genai'.
 import { GoogleGenAI, LiveServerMessage, Modality, Blob as GenAI_Blob, FunctionDeclaration, Type } from '@google/genai';
-import { Slide, LectureSessionState, TranscriptEntry } from '../types';
+import { Slide, LectureSessionState, TranscriptEntry, CanvasBlock } from '../types';
 import { encode, decode, decodeAudioData } from '../services/audioUtils';
 import { logger } from '../services/logger';
 
@@ -17,6 +17,7 @@ interface UseGeminiLiveProps {
   selectedVoice: string;
   selectedModel: string;
   onSlideChange: (slideNumber: number) => void;
+  onRenderCanvas: (contentBlocks: CanvasBlock[]) => void;
   apiKey: string | null;
   currentSlideIndex: number;
 }
@@ -36,7 +37,37 @@ const setActiveSlideFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
-export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, isMuted, selectedLanguage, selectedVoice, selectedModel, onSlideChange, apiKey, currentSlideIndex }: UseGeminiLiveProps) => {
+const renderCanvasFunctionDeclaration: FunctionDeclaration = {
+  name: 'renderCanvas',
+  description: 'Renders a structured list of content blocks on a canvas area to provide visual clarification or extra information. Use this to draw diagrams, show code, write formulas, or create text-based illustrations.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      contentBlocks: {
+        type: Type.ARRAY,
+        description: 'An array of content blocks to render sequentially on the canvas.',
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            type: {
+              type: Type.STRING,
+              description: "The type of content. Supported values: 'markdown', 'diagram', 'ascii', 'table'."
+            },
+            content: {
+              type: Type.STRING,
+              description: "The content for the block. For 'markdown', this is a Markdown string. For 'diagram', this is a Mermaid.js syntax string. For 'ascii', this is a text-based illustration. For 'table', it is a Markdown-formatted table string."
+            }
+          },
+          required: ['type', 'content']
+        }
+      },
+    },
+    required: ['contentBlocks'],
+  },
+};
+
+
+export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, isMuted, selectedLanguage, selectedVoice, selectedModel, onSlideChange, onRenderCanvas, apiKey, currentSlideIndex }: UseGeminiLiveProps) => {
   const [sessionState, _setSessionState] = useState<LectureSessionState>(LectureSessionState.IDLE);
   const [error, setError] = useState<string | null>(null);
 
@@ -159,7 +190,7 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } } },
-        tools: [{ functionDeclarations: [setActiveSlideFunctionDeclaration] }],
+        tools: [{ functionDeclarations: [setActiveSlideFunctionDeclaration, renderCanvasFunctionDeclaration] }],
         systemInstruction: `You are an AI lecturer. Your primary task is to explain a presentation, slide-by-slide, in ${selectedLanguage}.
 
         **General Information about the presentation:**
@@ -178,7 +209,31 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
         **Rules:**
         - All speech must be in ${selectedLanguage}.
         - Use the 'setActiveSlide' function to change slides ONLY when instructed by the user (e.g., when they say "next slide" or "go to slide 5").
-        - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Just start explaining the new content of the requested slide.`,
+        - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Just start explaining the new content of the requested slide.
+        - When presenting tabular data on the canvas, you MUST use a 'contentBlock' with type 'table'. Do not put tables inside 'markdown' blocks.
+        
+        **Canvas for Clarification (Advanced):**
+        - You have a powerful tool: 'renderCanvas'. Use it proactively to enhance your explanations when the slide content is not enough, or when the user asks a question that would benefit from a visual aid.
+        - This function accepts a JSON object with a single key, 'contentBlocks', which is an array of objects.
+        - Each object in the array represents a piece of content to be displayed. It MUST have a 'type' and a 'content' field.
+        
+        - **Supported 'type' values are:**
+          1.  'markdown': For formatted text, lists, and simple text. The 'content' should be a Markdown string.
+          2.  'diagram': For creating diagrams. The 'content' MUST be a valid Mermaid.js syntax string. Use this to illustrate processes, hierarchies, or relationships.
+          3.  'ascii': For text-based illustrations or sketches. The 'content' should be the ASCII art, which will be rendered in a monospace font.
+          4.  'table': For displaying tabular data. The 'content' MUST be a standard Markdown table string (using pipes | and hyphens -).
+        
+        - **Example Usage:**
+          If a user asks for a comparison, you could respond with a Markdown list and a Mermaid diagram:
+          { "contentBlocks": [ { "type": "markdown", "content": "Here is a comparison:" }, { "type": "diagram", "content": "graph TD; A-->B; A-->C;" } ] }
+        
+        - **When to Use the Canvas:**
+          - To explain complex concepts that are hard to describe with words alone.
+          - To show code snippets (use a 'markdown' block with \`\`\`).
+          - To draw diagrams (e.g., flowcharts, sequence diagrams) using Mermaid syntax.
+          - To provide lists, tables, or step-by-step instructions.
+        
+        - **Crucially:** After calling 'renderCanvas', you MUST inform the user. Say something like, "I've put a diagram on the canvas to illustrate that for you," or "Take a look at the canvas for the code example." This guides the user to the new visual information.`,
       },
     };
 
@@ -304,6 +359,19 @@ INSTRUCTION: You are the AI lecturer. Your session was just reconnected. Using t
                       });
                     });
                   }
+                } else if (fc.name === 'renderCanvas') {
+                    const contentBlocks = fc.args.contentBlocks as CanvasBlock[];
+                    logger.log(LOG_SOURCE, `Processing renderCanvas function call.`);
+                    onRenderCanvas(contentBlocks);
+                    sessionPromise.then((session) => {
+                      session.sendToolResponse({
+                        functionResponses: {
+                          id: fc.id,
+                          name: fc.name,
+                          response: { result: `OK. Canvas content has been rendered.` },
+                        }
+                      });
+                    });
                 }
               }
             }
@@ -377,7 +445,7 @@ INSTRUCTION: You are the AI lecturer. Your session was just reconnected. Using t
     });
 
     sessionPromiseRef.current = sessionPromise;
-  }, [slides, generalInfo, transcript, setTranscript, sendTextMessage, selectedLanguage, selectedVoice, selectedModel, onSlideChange, sendSlideImageContext, apiKey, cleanupConnectionResources, currentSlideIndex]);
+  }, [slides, generalInfo, transcript, setTranscript, sendTextMessage, selectedLanguage, selectedVoice, selectedModel, onSlideChange, onRenderCanvas, sendSlideImageContext, apiKey, cleanupConnectionResources, currentSlideIndex]);
 
   const replay = useCallback(() => {
     logger.debug(LOG_SOURCE, 'replay() called.');
