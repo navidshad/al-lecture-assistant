@@ -1,19 +1,21 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Slide, ParsedSlide } from '../types';
+import { Slide, ParsedSlide, LectureSession, LectureConfig } from '../types';
 import { parsePdf } from '../services/pdfUtils';
-import { UploadCloudIcon, Loader2, Globe, Cpu, Settings } from 'lucide-react';
+import { UploadCloudIcon, Loader2, Globe, Cpu, Settings, History } from 'lucide-react';
 import { SUPPORTED_LANGUES } from '../langueges.static';
 import { GoogleGenAI } from '@google/genai';
 import ConfigModal from '../components/ConfigModal';
 import { logger } from '../services/logger';
+import { sessionManager } from '../services/db';
 
 const LOG_SOURCE = 'IntroPage';
 
 interface IntroPageProps {
-  onLectureStart: (slides: Slide[], generalInfo: string, language: string, voice: string, model: string, fileName: string) => void;
+  onLectureStart: (session: LectureSession) => void;
   apiKey: string | null;
   onApiKeySave: (key: string) => void;
   onApiKeyRemove: () => void;
+  onShowSessions: () => void;
 }
 
 const LANGUAGE_STORAGE_KEY = 'ai-lecture-assistant-language';
@@ -57,7 +59,7 @@ const parseLecturePlanResponse = (planText: string): { generalInfo: string; slid
 }
 
 
-const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart, apiKey, onApiKeySave, onApiKeyRemove }) => {
+const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart, apiKey, onApiKeySave, onApiKeyRemove, onShowSessions }) => {
   const [isParsing, setIsParsing] = useState(false);
   const [loadingText, setLoadingText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -183,8 +185,28 @@ Slide 2:
             };
         });
 
+        const lectureConfig: LectureConfig = {
+            language: selectedLanguage,
+            voice: selectedVoice,
+            model: selectedModel,
+        };
+
+        const newSession: LectureSession = {
+            id: `${file.name}-${Date.now()}`,
+            fileName: file.name,
+            createdAt: Date.now(),
+            slides: enhancedSlides,
+            generalInfo,
+            transcript: [],
+            currentSlideIndex: 0,
+            lectureConfig,
+        };
+        
+        logger.log(LOG_SOURCE, 'Creating new session in DB.', { id: newSession.id });
+        await sessionManager.addSession(newSession);
+
         logger.log(LOG_SOURCE, 'Successfully processed file. Starting lecture.');
-        onLectureStart(enhancedSlides, generalInfo, selectedLanguage, selectedVoice, selectedModel, file.name);
+        onLectureStart(newSession);
 
       } catch (err) {
         logger.error(LOG_SOURCE, 'Failed to process PDF.', err);
@@ -199,7 +221,15 @@ Slide 2:
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-gray-200 p-4 relative">
-       <div className="absolute top-4 right-4">
+       <div className="absolute top-4 right-4 flex items-center gap-4">
+        <button
+          onClick={onShowSessions}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-700 text-white font-semibold rounded-lg hover:bg-gray-600 transition-colors"
+          title="View Saved Sessions"
+        >
+          <History className="h-5 w-5" />
+          <span>My Sessions</span>
+        </button>
         <button
           onClick={() => setIsConfigOpen(true)}
           className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"

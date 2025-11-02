@@ -8,6 +8,23 @@ export interface Slide extends ParsedSlide {
   summary: string;
 }
 
+export interface LectureConfig {
+  language: string;
+  voice: string;
+  model: string;
+}
+
+export interface LectureSession {
+  id: string;
+  fileName: string;
+  createdAt: number;
+  slides: Slide[];
+  generalInfo: string;
+  transcript: TranscriptEntry[];
+  currentSlideIndex: number;
+  lectureConfig: LectureConfig;
+}
+
 
 export enum LectureSessionState {
   IDLE = 'IDLE',

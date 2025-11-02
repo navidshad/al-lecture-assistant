@@ -1,41 +1,42 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Slide } from './types';
+import { Slide, LectureSession } from './types';
 import { ToastProvider } from './hooks/useToast';
 import ToastContainer from './components/ToastContainer';
 import IntroPage from './pages/IntroPage';
 import LecturePage from './pages/LecturePage';
+import SessionsPage from './pages/SessionsPage';
 import { useApiKey } from './hooks/useApiKey';
 import { Loader2 } from 'lucide-react';
 import { logger } from './services/logger';
 
 const LOG_SOURCE = 'App';
 
+type AppView = 'intro' | 'sessions' | 'lecture';
+
 function AppContent() {
   const { apiKey, setApiKey, clearApiKey, isLoaded } = useApiKey();
 
-  const [slides, setSlides] = useState<Slide[]>([]);
-  const [generalInfo, setGeneralInfo] = useState('');
-  const [lectureConfig, setLectureConfig] = useState({
-    language: 'English',
-    voice: 'Zephyr',
-    model: 'gemini-2.5-flash-native-audio-preview-09-2025'
-  });
-  const [fileName, setFileName] = useState('');
+  const [view, setView] = useState<AppView>('intro');
+  const [activeSession, setActiveSession] = useState<LectureSession | null>(null);
 
-  const handleLectureStart = useCallback((parsedSlides: Slide[], generalInfo: string, language: string, voice: string, model: string, uploadedFileName: string) => {
-    logger.log(LOG_SOURCE, 'Lecture starting. Setting state for lecture page.');
-    setSlides(parsedSlides);
-    setGeneralInfo(generalInfo);
-    setLectureConfig({ language, voice, model });
-    setFileName(uploadedFileName);
+  const handleNewLectureStart = useCallback((session: LectureSession) => {
+    logger.log(LOG_SOURCE, 'New lecture starting.', { sessionId: session.id });
+    setActiveSession(session);
+    setView('lecture');
+  }, []);
+  
+  const handleContinueSession = useCallback((session: LectureSession) => {
+    logger.log(LOG_SOURCE, 'Continuing lecture session.', { sessionId: session.id });
+    setActiveSession(session);
+    setView('lecture');
   }, []);
 
   const handleEndSession = useCallback(() => {
-    logger.log(LOG_SOURCE, 'Lecture ending. Clearing state.');
-    setSlides([]);
-    setGeneralInfo('');
-    setFileName('');
+    logger.log(LOG_SOURCE, 'Lecture ending. Clearing active session.');
+    setActiveSession(null);
+    setView('sessions'); // After ending, show the list of sessions
   }, []);
+
 
   useEffect(() => {
     logger.log(LOG_SOURCE, 'AppContent mounted.');
@@ -49,28 +50,33 @@ function AppContent() {
         </div>
     );
   }
-
-  if (slides.length === 0) {
+  
+  if (view === 'lecture' && activeSession) {
     return (
-      <IntroPage 
-        onLectureStart={handleLectureStart} 
+      <LecturePage 
+        session={activeSession}
+        onEndSession={handleEndSession} 
         apiKey={apiKey}
-        onApiKeySave={setApiKey}
-        onApiKeyRemove={clearApiKey}
       />
     );
   }
 
+  if (view === 'sessions') {
+      return (
+          <SessionsPage
+              onContinueSession={handleContinueSession}
+              onNewSession={() => setView('intro')}
+          />
+      );
+  }
+
   return (
-    <LecturePage 
-      slides={slides} 
-      generalInfo={generalInfo}
-      onEndSession={handleEndSession} 
-      selectedLanguage={lectureConfig.language} 
-      selectedVoice={lectureConfig.voice} 
-      selectedModel={lectureConfig.model} 
+    <IntroPage 
+      onLectureStart={handleNewLectureStart} 
       apiKey={apiKey}
-      fileName={fileName}
+      onApiKeySave={setApiKey}
+      onApiKeyRemove={clearApiKey}
+      onShowSessions={() => setView('sessions')}
     />
   );
 }

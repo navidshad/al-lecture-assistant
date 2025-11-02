@@ -209,6 +209,7 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
         **Rules:**
         - All speech must be in ${selectedLanguage}.
         - Use the 'setActiveSlide' function to change slides ONLY when instructed by the user (e.g., when they say "next slide" or "go to slide 5").
+        - CRITICAL: After successfully changing slides via 'setActiveSlide', you MUST immediately start explaining the new slide's content without waiting for any user prompt.
         - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Just start explaining the new content of the requested slide.
         - When presenting tabular data on the canvas, you MUST use a 'contentBlock' with type 'table'. Do not put tables inside 'markdown' blocks.
         
@@ -296,21 +297,21 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
                 // Send the image of the current slide first for visual context.
                 sendSlideImageContext(slides[currentSlideIndex]);
                 
-                // Construct a structured and direct prompt for the AI to resume.
-                const contextMessage = `CONTEXT for resuming a disconnected lecture session:
-[LECTURE PLAN]:
-${lecturePlanForAI}
+                // Construct a more direct and forceful prompt for the AI to resume.
+                const contextMessage = `**URGENT INSTRUCTION: RESUME LECTURE**
+Your previous session was disconnected and has just been reconnected. You must ignore the initial greeting and setup instructions from your system prompt.
 
-[RECENT CONVERSATION HISTORY]:
+**Current State:**
+- You are on **Slide ${currentSlideNumber}**.
+- The recent conversation was:
 ${recentHistory}
 
-[CURRENT SLIDE]: ${currentSlideNumber}
-
-INSTRUCTION: You are the AI lecturer. Your session was just reconnected. Using the context above, please resume the lecture for the current slide from where you left off. Do not greet the user again, just continue the explanation.`;
+**Your immediate task:**
+Continue the lecture from exactly where you left off. If you were in the middle of explaining something, pick it up. If you were waiting for the user, prompt them again. **You must start speaking now.**`;
 
                 sendTextMessage(contextMessage);
             } else {
-                const initialMessage = `Here are the summaries for each slide:\n\n${lecturePlanForAI}\n\nNow, please begin the lecture as instructed.`;
+                const initialMessage = `Here are the summaries for each slide:\n\n${lecturePlanForAI}\n\nNow, begin the lecture by greeting the user and explaining slide 1.`;
                 logger.debug(LOG_SOURCE, 'Sending initial context to AI.');
                 sendTextMessage(initialMessage);
             }
@@ -453,15 +454,15 @@ INSTRUCTION: You are the AI lecturer. Your session was just reconnected. Using t
   }, [sendTextMessage]);
   const next = useCallback(() => {
     logger.debug(LOG_SOURCE, 'next() called.');
-    sendTextMessage("Go to the next slide.");
+    sendTextMessage("Go to the next slide and explain it.");
   }, [sendTextMessage]);
   const previous = useCallback(() => {
     logger.debug(LOG_SOURCE, 'previous() called.');
-    sendTextMessage("Go back to the previous slide.");
+    sendTextMessage("Go back to the previous slide and explain it.");
   }, [sendTextMessage]);
   const goToSlide = useCallback((slideNumber: number) => {
     logger.debug(LOG_SOURCE, `goToSlide(${slideNumber}) called.`);
-    sendTextMessage(`Please jump to slide number ${slideNumber}.`);
+    sendTextMessage(`Go to slide number ${slideNumber} and explain it.`);
   }, [sendTextMessage]);
 
   useEffect(() => {
