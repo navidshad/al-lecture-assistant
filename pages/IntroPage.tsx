@@ -3,7 +3,7 @@ import { LectureSession } from "../types";
 import { Globe, Cpu, Settings, History } from "lucide-react";
 import { SUPPORTED_LANGUAGES } from "../constants/languages";
 import { VOICES } from "../constants/voices";
-import { MODELS } from "../constants/models";
+import { MODELS, ModelId } from "../constants/models";
 import ConfigModal from "../components/ConfigModal";
 import { logger } from "../services/logger";
 import { sessionManager } from "../services/db";
@@ -33,11 +33,17 @@ const IntroPage: React.FC<IntroPageProps> = ({
 }) => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 
-  const [selectedLanguage, setSelectedLanguage] = useLocalStorage<string>(LANGUAGE_STORAGE_KEY, "English");
+  const [selectedLanguage, setSelectedLanguage] = useLocalStorage<string>(
+    LANGUAGE_STORAGE_KEY,
+    "English"
+  );
 
-  const [selectedVoice, setSelectedVoice] = useLocalStorage<string>(VOICE_STORAGE_KEY, "Zephyr");
+  const [selectedVoice, setSelectedVoice] = useLocalStorage<string>(
+    VOICE_STORAGE_KEY,
+    "Zephyr"
+  );
 
-  const [selectedModel, setSelectedModel] = useState(MODELS[0].id);
+  const [selectedModel, setSelectedModel] = useState<ModelId>(MODELS[0].id);
 
   // Ensure language remains valid if list updates
   useEffect(() => {

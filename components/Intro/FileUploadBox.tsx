@@ -19,6 +19,7 @@ const FileUploadBox: React.FC<FileUploadBoxProps> = ({
   return (
     <label
       htmlFor="pdf-upload"
+      aria-disabled={disabled}
       className={`relative block w-full h-64 border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-300 bg-gray-800/50 ${
         !disabled
           ? "border-gray-600 hover:border-blue-500"

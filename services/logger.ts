@@ -1,5 +1,8 @@
 // A simple logger utility to prefix messages and allow for easy disabling.
-const DEBUG_MODE = true;
+// Enable logs in dev, or when explicitly configured via Vite env define.
+const DEBUG_MODE: boolean =
+  (typeof import.meta !== "undefined" && (import.meta as any).env?.DEV) ||
+  false;
 
 const getTimestamp = () => new Date().toISOString();
 
