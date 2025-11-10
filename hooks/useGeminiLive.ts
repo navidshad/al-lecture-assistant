@@ -578,6 +578,11 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
               const newTranscript = [...prev];
               const lastEntry = newTranscript[newTranscript.length - 1];
               if (lastEntry?.speaker === "user") {
+                const trimmed = text.trim();
+                // Skip if this chunk already appears at the end of the last user entry
+                if ((lastEntry.text || "").endsWith(trimmed)) {
+                  return prev;
+                }
                 // Replace with latest transcript-so-far to avoid duplicate words
                 const prevText = lastEntry.text || "";
                 if (text.startsWith(prevText)) {
@@ -601,6 +606,11 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
               const newTranscript = [...prev];
               const lastEntry = newTranscript[newTranscript.length - 1];
               if (aiMessageOpenRef.current && lastEntry?.speaker === "ai") {
+                const trimmed = text.trim();
+                // Skip if this chunk already appears at the end of the last AI entry
+                if ((lastEntry.text || "").endsWith(trimmed)) {
+                  return prev;
+                }
                 // Replace with latest transcript-so-far to avoid duplicate words
                 const prevText = lastEntry.text || "";
                 if (text.startsWith(prevText)) {
