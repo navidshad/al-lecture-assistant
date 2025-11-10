@@ -10,8 +10,8 @@ A lightweight, browser‑based assistant for teaching and studying. Load a PDF o
 - Reading groups, paper walkthroughs, and team demos with live Q&A
 
 ## Features
-- PDF slide viewer with thumbnails, page navigation, and zoom
-- Canvas tab for quick sketches alongside your slides
+- PDF slide viewer with thumbnails and page navigation
+- Canvas for extra AI‑side clarification (quick diagrams/notes generated or guided by the AI)
 - Transcript panel for your full conversation with the AI
 - Microphone capture and optional spoken responses (where supported)
 - Gemini‑powered explanations, summaries, and slide‑aware Q&A
