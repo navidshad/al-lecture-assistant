@@ -1,5 +1,6 @@
 {
   "name": "ai-lecture-assistant",
+  "description": "An application that transforms PDF lecture files into live, interactive voice-based learning sessions using the Gemini Live API. Upload a PDF, and an AI lecturer will explain it slide by slide, allowing you to ask questions in real-time.",
   "private": true,
   "version": "0.0.0",
   "type": "module",
