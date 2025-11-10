@@ -1,16 +1,26 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Slide, TranscriptEntry, LectureSessionState, CanvasBlock, LectureSession } from '../types';
-import { useGeminiLive } from '../hooks/useGeminiLive';
-import { useToast } from '../hooks/useToast';
-import { sessionManager } from '../services/db';
-import SlideViewer from '../components/SlideViewer';
-import CanvasViewer from '../components/CanvasViewer';
-import Controls from '../components/Controls';
-import TranscriptPanel from '../components/TranscriptPanel';
-import { Power, PlayCircle } from 'lucide-react';
-import { logger } from '../services/logger';
+import React, { useState, useCallback, useEffect } from "react";
+import {
+  Slide,
+  TranscriptEntry,
+  LectureSessionState,
+  CanvasBlock,
+  LectureSession,
+} from "../types";
+import { useGeminiLive } from "../hooks/useGeminiLive";
+import { useToast } from "../hooks/useToast";
+import { sessionManager } from "../services/db";
+import SlideViewer from "../components/SlideViewer";
+import CanvasViewer from "../components/CanvasViewer";
+import Controls from "../components/Controls";
+import TranscriptPanel from "../components/TranscriptPanel";
+import { Power, PlayCircle } from "lucide-react";
+import { logger } from "../services/logger";
+import TopBar from "../components/Lecture/TopBar";
+import TabNav from "../components/Lecture/TabNav";
+import SlidesThumbStrip from "../components/Lecture/SlidesThumbStrip";
+import { useSessionPersistence } from "../hooks/useSessionPersistence";
 
-const LOG_SOURCE = 'LecturePage';
+const LOG_SOURCE = "LecturePage";
 
 interface LecturePageProps {
   session: LectureSession;
@@ -18,55 +28,55 @@ interface LecturePageProps {
   apiKey: string | null;
 }
 
-const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey }) => {
+const LecturePage: React.FC<LecturePageProps> = ({
+  session,
+  onEndSession,
+  apiKey,
+}) => {
   const [slides, setSlides] = useState<Slide[]>(session.slides);
-  const [currentSlideIndex, _setCurrentSlideIndex] = useState(session.currentSlideIndex);
+  const [currentSlideIndex, _setCurrentSlideIndex] = useState(
+    session.currentSlideIndex
+  );
   const [isMuted, setIsMuted] = useState(true);
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>(session.transcript);
-  const [hasLectureStarted, setHasLectureStarted] = useState(session.transcript.length > 0);
-  
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>(
+    session.transcript
+  );
+  const [hasLectureStarted, setHasLectureStarted] = useState(
+    session.transcript.length > 0
+  );
+
   const [isTranscriptVisible, setIsTranscriptVisible] = useState(false);
   const [isSlidesVisible, setIsSlidesVisible] = useState(false);
-  
-  const [activeTab, setActiveTab] = useState<'slide' | 'canvas'>('slide');
+
+  const [activeTab, setActiveTab] = useState<"slide" | "canvas">("slide");
 
   const { showToast } = useToast();
 
-  const saveSessionState = useCallback(async () => {
-    logger.debug(LOG_SOURCE, 'Saving session state to DB.');
-    const updatedSession: LectureSession = {
-        ...session,
-        slides: slides,
-        transcript: transcript,
-        currentSlideIndex: currentSlideIndex,
-    };
-    try {
-        await sessionManager.updateSession(updatedSession);
-    } catch (e) {
-        logger.error(LOG_SOURCE, 'Failed to save session state', e);
-    }
-  }, [session, slides, transcript, currentSlideIndex]);
-
-  useEffect(() => {
-    // Debounce saving the session state. This runs whenever the saveSessionState
-    // function is recreated (i.e., when its dependencies change).
-    const debounceTimeout = setTimeout(saveSessionState, 2000);
-    return () => clearTimeout(debounceTimeout);
-  }, [saveSessionState]);
-
+  const { saveSessionState } = useSessionPersistence({
+    session,
+    slides,
+    transcript,
+    currentSlideIndex,
+  });
 
   const setCurrentSlideIndex = (updater: React.SetStateAction<number>) => {
-    _setCurrentSlideIndex(prevIndex => {
-        const newIndex = typeof updater === 'function' ? updater(prevIndex) : updater;
-        if (prevIndex !== newIndex) {
-            logger.debug(LOG_SOURCE, `Slide index changing from ${prevIndex} to ${newIndex}`);
-        }
-        return newIndex;
+    _setCurrentSlideIndex((prevIndex) => {
+      const newIndex =
+        typeof updater === "function" ? updater(prevIndex) : updater;
+      if (prevIndex !== newIndex) {
+        logger.debug(
+          LOG_SOURCE,
+          `Slide index changing from ${prevIndex} to ${newIndex}`
+        );
+      }
+      return newIndex;
     });
   };
 
   useEffect(() => {
-    logger.log(LOG_SOURCE, 'Component mounted with session:', { sessionId: session.id });
+    logger.log(LOG_SOURCE, "Component mounted with session:", {
+      sessionId: session.id,
+    });
     const checkDesktop = () => {
       if (window.innerWidth >= 768) {
         setIsSlidesVisible(true);
@@ -75,59 +85,79 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
       }
     };
     checkDesktop();
-    window.addEventListener('resize', checkDesktop);
-    return () => window.removeEventListener('resize', checkDesktop);
+    window.addEventListener("resize", checkDesktop);
+    return () => window.removeEventListener("resize", checkDesktop);
   }, [session.id]);
 
   const handleTranscriptToggle = useCallback(() => {
     if (window.innerWidth < 768) {
-      setIsTranscriptVisible(prev => {
+      setIsTranscriptVisible((prev) => {
         if (!prev) setIsSlidesVisible(false);
         return !prev;
       });
     } else {
-      setIsTranscriptVisible(prev => !prev);
+      setIsTranscriptVisible((prev) => !prev);
     }
   }, []);
 
   const handleSlidesToggle = useCallback(() => {
     if (window.innerWidth < 768) {
-      setIsSlidesVisible(prev => {
+      setIsSlidesVisible((prev) => {
         if (!prev) setIsTranscriptVisible(false);
         return !prev;
       });
     } else {
-      setIsSlidesVisible(prev => !prev);
+      setIsSlidesVisible((prev) => !prev);
     }
   }, []);
-  
-  const handleSlideChangeFromAI = useCallback((slideNumber: number) => {
-    logger.log(LOG_SOURCE, `AI requested slide change to ${slideNumber}`);
-    const newIndex = slideNumber - 1;
-    if (newIndex >= 0 && newIndex < slides.length) {
-      setCurrentSlideIndex(newIndex);
-    } else {
-      logger.warn(LOG_SOURCE, `AI tried to switch to an invalid slide number: ${slideNumber}`);
-    }
-  }, [slides.length]);
 
-  const handleRenderCanvas = useCallback((contentBlocks: CanvasBlock[]) => {
-    logger.log(LOG_SOURCE, 'Received request to render canvas content.');
-    setSlides(prevSlides => {
-      const newSlides = [...prevSlides];
-      const currentSlide = newSlides[currentSlideIndex];
-      if (currentSlide) {
-        newSlides[currentSlideIndex] = {
-          ...currentSlide,
-          canvasContent: contentBlocks,
-        };
+  const handleSlideChangeFromAI = useCallback(
+    (slideNumber: number) => {
+      logger.log(LOG_SOURCE, `AI requested slide change to ${slideNumber}`);
+      const newIndex = slideNumber - 1;
+      if (newIndex >= 0 && newIndex < slides.length) {
+        setCurrentSlideIndex(newIndex);
+      } else {
+        logger.warn(
+          LOG_SOURCE,
+          `AI tried to switch to an invalid slide number: ${slideNumber}`
+        );
       }
-      return newSlides;
-    });
-    setActiveTab('canvas');
-  }, [currentSlideIndex]);
+    },
+    [slides.length]
+  );
 
-  const { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, requestExplanation } = useGeminiLive({
+  const handleRenderCanvas = useCallback(
+    (contentBlocks: CanvasBlock[]) => {
+      logger.log(LOG_SOURCE, "Received request to render canvas content.");
+      setSlides((prevSlides) => {
+        const newSlides = [...prevSlides];
+        const currentSlide = newSlides[currentSlideIndex];
+        if (currentSlide) {
+          newSlides[currentSlideIndex] = {
+            ...currentSlide,
+            canvasContent: contentBlocks,
+          };
+        }
+        return newSlides;
+      });
+      setActiveTab("canvas");
+    },
+    [currentSlideIndex]
+  );
+
+  const {
+    sessionState,
+    startLecture,
+    replay,
+    next,
+    previous,
+    end,
+    error,
+    goToSlide,
+    sendTextMessage,
+    requestExplanation,
+  } = useGeminiLive({
     slides: slides,
     generalInfo: session.generalInfo,
     transcript,
@@ -144,75 +174,90 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
 
   useEffect(() => {
     if (error) {
-      logger.error(LOG_SOURCE, 'Received error from useGeminiLive hook:', error);
-      showToast(error, 'error');
+      logger.error(
+        LOG_SOURCE,
+        "Received error from useGeminiLive hook:",
+        error
+      );
+      showToast(error, "error");
     }
   }, [error, showToast]);
-  
+
   // Reset to slide view whenever the slide changes
   useEffect(() => {
-      logger.debug(LOG_SOURCE, `Slide index changed to ${currentSlideIndex}, resetting tab to 'slide'.`);
-      setActiveTab('slide');
+    logger.debug(
+      LOG_SOURCE,
+      `Slide index changed to ${currentSlideIndex}, resetting tab to 'slide'.`
+    );
+    setActiveTab("slide");
   }, [currentSlideIndex]);
 
-
   const handleStartLecture = () => {
-    logger.log(LOG_SOURCE, 'handleStartLecture called for a new session.');
+    logger.log(LOG_SOURCE, "handleStartLecture called for a new session.");
     setHasLectureStarted(true);
     startLecture();
   };
 
   useEffect(() => {
     if (session.transcript.length > 0) {
-        logger.log(LOG_SOURCE, 'Continuing session, calling startLecture automatically.');
-        startLecture();
+      logger.log(
+        LOG_SOURCE,
+        "Continuing session, calling startLecture automatically."
+      );
+      startLecture();
     }
     // This effect should only run once on mount for this purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleReconnect = useCallback(() => {
-    logger.log(LOG_SOURCE, 'handleReconnect called.');
+    logger.log(LOG_SOURCE, "handleReconnect called.");
     startLecture();
   }, [startLecture]);
 
   const handleNext = useCallback(() => {
-    logger.debug(LOG_SOURCE, 'handleNext called.');
+    logger.debug(LOG_SOURCE, "handleNext called.");
     if (currentSlideIndex < slides.length - 1) {
       next();
     }
   }, [currentSlideIndex, slides.length, next]);
 
   const handlePrevious = useCallback(() => {
-    logger.debug(LOG_SOURCE, 'handlePrevious called.');
+    logger.debug(LOG_SOURCE, "handlePrevious called.");
     if (currentSlideIndex > 0) {
       previous();
     }
   }, [currentSlideIndex, previous]);
 
-  const handleSelectSlide = useCallback((index: number) => {
-    logger.debug(LOG_SOURCE, `handleSelectSlide called for index ${index}.`);
-    if (index !== currentSlideIndex) {
-      setCurrentSlideIndex(index);
-      const slide = slides[index];
-      if (slide && requestExplanation) {
-        requestExplanation(slide);
+  const handleSelectSlide = useCallback(
+    (index: number) => {
+      logger.debug(LOG_SOURCE, `handleSelectSlide called for index ${index}.`);
+      if (index !== currentSlideIndex) {
+        setCurrentSlideIndex(index);
+        const slide = slides[index];
+        if (slide && requestExplanation) {
+          requestExplanation(slide);
+        }
       }
-    }
-  }, [currentSlideIndex, slides, requestExplanation]);
+    },
+    [currentSlideIndex, slides, requestExplanation]
+  );
 
-  const handleSendMessage = useCallback((message: string) => {
-    logger.debug(LOG_SOURCE, 'handleSendMessage called for typed text.');
-    if (!sendTextMessage) return;
-    
-    // Optimistically add the user's typed message to the transcript.
-    // The `inputTranscription` event is for voice input, not for messages sent via this text input.
-    setTranscript(prev => [...prev, { speaker: 'user', text: message }]);
-    sendTextMessage(message);
-  }, [sendTextMessage, setTranscript]);
-  
+  const handleSendMessage = useCallback(
+    (message: string) => {
+      logger.debug(LOG_SOURCE, "handleSendMessage called for typed text.");
+      if (!sendTextMessage) return;
+
+      // Optimistically add the user's typed message to the transcript.
+      // The `inputTranscription` event is for voice input, not for messages sent via this text input.
+      setTranscript((prev) => [...prev, { speaker: "user", text: message }]);
+      sendTextMessage(message);
+    },
+    [sendTextMessage, setTranscript]
+  );
+
   const handleEndSession = useCallback(async () => {
-    logger.log(LOG_SOURCE, 'handleEndSession called. Forcing final save.');
+    logger.log(LOG_SOURCE, "handleEndSession called. Forcing final save.");
     await saveSessionState();
     end();
     onEndSession();
@@ -223,33 +268,36 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
 
     const header = `AI Lecture Transcript\n=====================\n\n`;
     const overview = `Presentation Overview:\n${session.generalInfo}\n\n---------------------\nConversation History:\n---------------------\n\n`;
-    
+
     const conversation = transcript
-        .map(entry => `${entry.speaker === 'user' ? 'User' : 'AI Lecturer'}: ${entry.text}`)
-        .join('\n\n');
+      .map(
+        (entry) =>
+          `${entry.speaker === "user" ? "User" : "AI Lecturer"}: ${entry.text}`
+      )
+      .join("\n\n");
 
     const fileContent = header + overview + conversation;
 
-    const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([fileContent], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
 
-    const baseFileName = session.fileName.replace(/\.pdf$/i, '');
+    const baseFileName = session.fileName.replace(/\.pdf$/i, "");
     link.download = `${baseFileName}-transcript.txt`;
-    
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    logger.log(LOG_SOURCE, 'Transcript downloaded.');
+    logger.log(LOG_SOURCE, "Transcript downloaded.");
   }, [transcript, session.generalInfo, session.fileName]);
-  
-  const tabButtonClasses = (tabName: 'slide' | 'canvas') => 
+
+  const tabButtonClasses = (tabName: "slide" | "canvas") =>
     `px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none ${
-      activeTab === tabName 
-        ? 'text-blue-400 border-b-2 border-blue-400' 
-        : 'text-gray-400 border-b-2 border-transparent hover:bg-gray-700/50 hover:text-gray-200'
+      activeTab === tabName
+        ? "text-blue-400 border-b-2 border-blue-400"
+        : "text-gray-400 border-b-2 border-transparent hover:bg-gray-700/50 hover:text-gray-200"
     }`;
 
   const currentCanvasContent = slides[currentSlideIndex]?.canvasContent || [];
@@ -270,42 +318,38 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="flex-shrink-0 bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 p-4 flex items-center justify-between z-20">
-          <h1 className="text-xl font-bold truncate pr-4" title={session.fileName}>{session.fileName}</h1>
-          <div className="text-sm text-gray-400 flex-shrink-0">
-            Slide {currentSlideIndex + 1} of {slides.length}
-          </div>
-        </header>
+        <TopBar
+          fileName={session.fileName}
+          currentSlide={currentSlideIndex + 1}
+          totalSlides={slides.length}
+        />
 
         <div className="flex-1 flex flex-col relative overflow-hidden">
           <main className="flex-1 flex flex-col p-4 md:p-8 overflow-hidden">
-             <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex-1 min-h-0 flex flex-col">
               {/* Tab buttons */}
-              <div className="flex-shrink-0">
-                <div className="border-b border-gray-700">
-                  <nav className="-mb-px flex space-x-2" aria-label="Tabs">
-                    <button onClick={() => setActiveTab('slide')} className={tabButtonClasses('slide')}>
-                      Slide
-                    </button>
-                    <button onClick={() => setActiveTab('canvas')} className={tabButtonClasses('canvas')}>
-                      Canvas
-                    </button>
-                  </nav>
-                </div>
-              </div>
+              <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
               {/* Tab content */}
               <div className="flex-1 min-h-0 pt-4">
-                <div className={`${activeTab === 'slide' ? 'block' : 'hidden'} w-full h-full`}>
-                   <SlideViewer 
-                    slide={slides[currentSlideIndex]} 
+                <div
+                  className={`${
+                    activeTab === "slide" ? "block" : "hidden"
+                  } w-full h-full`}
+                >
+                  <SlideViewer
+                    slide={slides[currentSlideIndex]}
                     sessionState={sessionState}
                     error={error}
                     onReconnect={handleReconnect}
                   />
                 </div>
-                <div className={`${activeTab === 'canvas' ? 'block' : 'hidden'} w-full h-full`}>
-                    <CanvasViewer content={currentCanvasContent} />
+                <div
+                  className={`${
+                    activeTab === "canvas" ? "block" : "hidden"
+                  } w-full h-full`}
+                >
+                  <CanvasViewer content={currentCanvasContent} />
                 </div>
               </div>
             </div>
@@ -321,25 +365,25 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
                 sessionState={sessionState}
               />
             </div>
-            
+
             {/* Mobile Slides Overview Panel */}
-            <div className={`md:hidden overflow-hidden transition-all duration-300 ease-in-out ${isSlidesVisible ? 'h-36 mt-4' : 'h-0'}`}>
+            <div
+              className={`md:hidden overflow-hidden transition-all duration-300 ease-in-out ${
+                isSlidesVisible ? "h-36 mt-4" : "h-0"
+              }`}
+            >
               <div className="h-full bg-gray-800/50 rounded-lg border border-gray-700 p-2 overflow-x-auto flex items-center space-x-2">
-                {slides.map((slide, index) => (
-                  <div
-                    key={slide.pageNumber}
-                    onClick={() => handleSelectSlide(index)}
-                    className={`flex-shrink-0 h-full aspect-[4/3] rounded-md overflow-hidden cursor-pointer border-2 transition-all ${
-                      index === currentSlideIndex ? 'border-blue-500' : 'border-transparent hover:border-gray-500'
-                    }`}
-                  >
-                    <img src={slide.imageDataUrl} alt={`Slide ${slide.pageNumber}`} className="w-full h-full object-cover" />
-                  </div>
-                ))}
+                <SlidesThumbStrip
+                  slides={slides}
+                  currentIndex={currentSlideIndex}
+                  onSelect={handleSelectSlide}
+                  itemClassName="flex-shrink-0 h-full aspect-[4/3]"
+                  imageClassName="w-full h-full object-cover"
+                />
               </div>
             </div>
           </main>
-          
+
           {!hasLectureStarted && (
             <div className="absolute inset-0 bg-gray-900/80 backdrop-blur-sm flex items-center justify-center z-30">
               <button
@@ -358,7 +402,7 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
           {hasLectureStarted ? (
             <Controls
               isMuted={isMuted}
-              onMuteToggle={() => setIsMuted(prev => !prev)}
+              onMuteToggle={() => setIsMuted((prev) => !prev)}
               onReplay={replay}
               onNext={handleNext}
               onPrevious={handlePrevious}
@@ -383,24 +427,24 @@ const LecturePage: React.FC<LecturePageProps> = ({ session, onEndSession, apiKey
           )}
         </footer>
       </div>
-      
+
       {/* Desktop Right Slides Panel */}
-      <aside className={`hidden md:flex flex-col bg-gray-800/50 border-l border-gray-700 transition-all duration-300 ease-in-out ${isSlidesVisible ? 'w-48 md:w-64 p-2' : 'w-0'}`}>
+      <aside
+        className={`hidden md:flex flex-col bg-gray-800/50 border-l border-gray-700 transition-all duration-300 ease-in-out ${
+          isSlidesVisible ? "w-48 md:w-64 p-2" : "w-0"
+        }`}
+      >
         {isSlidesVisible && (
           <>
-            <h2 className="text-sm font-semibold text-gray-400 p-2 flex-shrink-0">Slides</h2>
+            <h2 className="text-sm font-semibold text-gray-400 p-2 flex-shrink-0">
+              Slides
+            </h2>
             <div className="flex-1 space-y-2 overflow-y-auto">
-              {slides.map((slide, index) => (
-                <div
-                  key={slide.pageNumber}
-                  onClick={() => handleSelectSlide(index)}
-                  className={`rounded-md overflow-hidden cursor-pointer border-2 transition-all ${
-                    index === currentSlideIndex ? 'border-blue-500 shadow-lg' : 'border-transparent hover:border-gray-500'
-                  }`}
-                >
-                  <img src={slide.imageDataUrl} alt={`Slide ${slide.pageNumber}`} className="w-full h-auto" />
-                </div>
-              ))}
+              <SlidesThumbStrip
+                slides={slides}
+                currentIndex={currentSlideIndex}
+                onSelect={handleSelectSlide}
+              />
             </div>
           </>
         )}

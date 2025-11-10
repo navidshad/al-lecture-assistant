@@ -41,6 +41,7 @@ export enum LectureSessionState {
 export interface TranscriptEntry {
   speaker: 'user' | 'ai';
   text: string;
+  slideNumber?: number;
 }
 
 export type CanvasBlockType = 'markdown' | 'diagram' | 'ascii' | 'table';

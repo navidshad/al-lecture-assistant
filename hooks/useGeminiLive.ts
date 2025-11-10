@@ -1,11 +1,30 @@
-import { useState, useEffect, useRef, useCallback, Dispatch, SetStateAction } from 'react';
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  Dispatch,
+  SetStateAction,
+} from "react";
 // FIX: Removed `LiveSession` as it is not an exported member of '@google/genai'.
-import { GoogleGenAI, LiveServerMessage, Modality, Blob as GenAI_Blob, FunctionDeclaration, Type } from '@google/genai';
-import { Slide, LectureSessionState, TranscriptEntry, CanvasBlock } from '../types';
-import { encode, decode, decodeAudioData } from '../services/audioUtils';
-import { logger } from '../services/logger';
+import {
+  GoogleGenAI,
+  LiveServerMessage,
+  Modality,
+  Blob as GenAI_Blob,
+  FunctionDeclaration,
+  Type,
+} from "@google/genai";
+import {
+  Slide,
+  LectureSessionState,
+  TranscriptEntry,
+  CanvasBlock,
+} from "../types";
+import { encode, decode, decodeAudioData } from "../services/audioUtils";
+import { logger } from "../services/logger";
 
-const LOG_SOURCE = 'useGeminiLive';
+const LOG_SOURCE = "useGeminiLive";
 
 interface UseGeminiLiveProps {
   slides: Slide[];
@@ -23,52 +42,72 @@ interface UseGeminiLiveProps {
 }
 
 const setActiveSlideFunctionDeclaration: FunctionDeclaration = {
-  name: 'setActiveSlide',
-  description: 'Sets the active presentation slide to the specified slide number. Use this function to navigate the presentation.',
+  name: "setActiveSlide",
+  description:
+    "Sets the active presentation slide to the specified slide number. Use this function to navigate the presentation.",
   parameters: {
     type: Type.OBJECT,
     properties: {
       slideNumber: {
         type: Type.NUMBER,
-        description: 'The number of the slide to display. Note: Slide numbers are 1-based.',
+        description:
+          "The number of the slide to display. Note: Slide numbers are 1-based.",
       },
     },
-    required: ['slideNumber'],
+    required: ["slideNumber"],
   },
 };
 
 const renderCanvasFunctionDeclaration: FunctionDeclaration = {
-  name: 'renderCanvas',
-  description: 'Renders a structured list of content blocks on a canvas area to provide visual clarification or extra information. Use this to draw diagrams, show code, write formulas, or create text-based illustrations.',
+  name: "renderCanvas",
+  description:
+    "Renders a structured list of content blocks on a canvas area to provide visual clarification or extra information. Use this to draw diagrams, show code, write formulas, or create text-based illustrations.",
   parameters: {
     type: Type.OBJECT,
     properties: {
       contentBlocks: {
         type: Type.ARRAY,
-        description: 'An array of content blocks to render sequentially on the canvas.',
+        description:
+          "An array of content blocks to render sequentially on the canvas.",
         items: {
           type: Type.OBJECT,
           properties: {
             type: {
               type: Type.STRING,
-              description: "The type of content. Supported values: 'markdown', 'diagram', 'ascii', 'table'."
+              description:
+                "The type of content. Supported values: 'markdown', 'diagram', 'ascii', 'table'.",
             },
             content: {
               type: Type.STRING,
-              description: "The content for the block. For 'markdown', this is a Markdown string. For 'diagram', this is a Mermaid.js syntax string. For 'ascii', this is a text-based illustration. For 'table', it is a Markdown-formatted table string."
-            }
+              description:
+                "The content for the block. For 'markdown', this is a Markdown string. For 'diagram', this is a Mermaid.js syntax string. For 'ascii', this is a text-based illustration. For 'table', it is a Markdown-formatted table string.",
+            },
           },
-          required: ['type', 'content']
-        }
+          required: ["type", "content"],
+        },
       },
     },
-    required: ['contentBlocks'],
+    required: ["contentBlocks"],
   },
 };
 
-
-export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, isMuted, selectedLanguage, selectedVoice, selectedModel, onSlideChange, onRenderCanvas, apiKey, currentSlideIndex }: UseGeminiLiveProps) => {
-  const [sessionState, _setSessionState] = useState<LectureSessionState>(LectureSessionState.IDLE);
+export const useGeminiLive = ({
+  slides,
+  generalInfo,
+  transcript,
+  setTranscript,
+  isMuted,
+  selectedLanguage,
+  selectedVoice,
+  selectedModel,
+  onSlideChange,
+  onRenderCanvas,
+  apiKey,
+  currentSlideIndex,
+}: UseGeminiLiveProps) => {
+  const [sessionState, _setSessionState] = useState<LectureSessionState>(
+    LectureSessionState.IDLE
+  );
   const [error, setError] = useState<string | null>(null);
 
   // FIX: Replaced `Promise<LiveSession>` with `Promise<any>` as `LiveSession` is not exported.
@@ -81,13 +120,18 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
   const nextStartTimeRef = useRef(0);
   const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const isMutedRef = useRef(isMuted);
+  const aiMessageOpenRef = useRef(false);
+  const currentSlideIndexRef = useRef(currentSlideIndex);
 
   const setSessionState = (newState: LectureSessionState) => {
-    _setSessionState(prevState => {
-        if (prevState !== newState) {
-            logger.debug(LOG_SOURCE, `Session state changing from ${prevState} to ${newState}`);
-        }
-        return newState;
+    _setSessionState((prevState) => {
+      if (prevState !== newState) {
+        logger.debug(
+          LOG_SOURCE,
+          `Session state changing from ${prevState} to ${newState}`
+        );
+      }
+      return newState;
     });
   };
 
@@ -95,106 +139,142 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
     isMutedRef.current = isMuted;
   }, [isMuted]);
 
+  useEffect(() => {
+    currentSlideIndexRef.current = currentSlideIndex;
+  }, [currentSlideIndex]);
 
   const cleanupConnectionResources = useCallback(() => {
-    logger.log(LOG_SOURCE, 'Cleaning up connection resources.');
+    logger.log(LOG_SOURCE, "Cleaning up connection resources.");
     if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-        mediaStreamRef.current = null;
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
     }
     if (scriptProcessorRef.current) {
-        scriptProcessorRef.current.disconnect();
-        scriptProcessorRef.current = null;
+      scriptProcessorRef.current.disconnect();
+      scriptProcessorRef.current = null;
     }
     if (mediaStreamSourceRef.current) {
-        mediaStreamSourceRef.current.disconnect();
-        mediaStreamSourceRef.current = null;
+      mediaStreamSourceRef.current.disconnect();
+      mediaStreamSourceRef.current = null;
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close().catch(e => logger.warn(LOG_SOURCE, 'Error closing input audio context', e));
-        audioContextRef.current = null;
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      audioContextRef.current
+        .close()
+        .catch((e) =>
+          logger.warn(LOG_SOURCE, "Error closing input audio context", e)
+        );
+      audioContextRef.current = null;
     }
-    if (outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed') {
-        outputAudioContextRef.current.close().catch(e => logger.warn(LOG_SOURCE, 'Error closing output audio context', e));
-        outputAudioContextRef.current = null;
+    if (
+      outputAudioContextRef.current &&
+      outputAudioContextRef.current.state !== "closed"
+    ) {
+      outputAudioContextRef.current
+        .close()
+        .catch((e) =>
+          logger.warn(LOG_SOURCE, "Error closing output audio context", e)
+        );
+      outputAudioContextRef.current = null;
     }
     if (sessionPromiseRef.current) {
-        logger.debug(LOG_SOURCE, 'Closing previous session promise.');
-        sessionPromiseRef.current.then(session => session?.close()).catch(() => {});
-        sessionPromiseRef.current = null;
+      logger.debug(LOG_SOURCE, "Closing previous session promise.");
+      sessionPromiseRef.current
+        .then((session) => session?.close())
+        .catch(() => {});
+      sessionPromiseRef.current = null;
     }
-    audioSourcesRef.current.forEach(source => source.stop());
+    audioSourcesRef.current.forEach((source) => source.stop());
     audioSourcesRef.current.clear();
     nextStartTimeRef.current = 0;
   }, []);
 
   // FIX: Renamed disconnect to end to match what's being returned and used in LecturePage.
   const end = useCallback(() => {
-    logger.log(LOG_SOURCE, 'end() called. Performing full cleanup.');
+    logger.log(LOG_SOURCE, "end() called. Performing full cleanup.");
     cleanupConnectionResources();
     setSessionState(LectureSessionState.ENDED);
   }, [cleanupConnectionResources]);
 
   const sendTextMessage = useCallback((text: string) => {
-    logger.debug(LOG_SOURCE, 'sendTextMessage called.');
+    logger.debug(LOG_SOURCE, "sendTextMessage called.");
     if (sessionPromiseRef.current) {
-        sessionPromiseRef.current.then(session => {
-            session.sendRealtimeInput({ text });
-        });
+      sessionPromiseRef.current.then((session) => {
+        session.sendRealtimeInput({ text });
+      });
     } else {
-      logger.warn(LOG_SOURCE, 'sendTextMessage called but session promise is null.');
+      logger.warn(
+        LOG_SOURCE,
+        "sendTextMessage called but session promise is null."
+      );
     }
   }, []);
-  
+
   const sendSlideImageContext = useCallback((slide: Slide) => {
-    logger.debug(LOG_SOURCE, `sendSlideImageContext called for slide ${slide.pageNumber}`);
+    logger.debug(
+      LOG_SOURCE,
+      `sendSlideImageContext called for slide ${slide.pageNumber}`
+    );
     if (sessionPromiseRef.current) {
-      sessionPromiseRef.current.then(session => {
-        const base64Data = slide.imageDataUrl.split(',')[1];
+      sessionPromiseRef.current.then((session) => {
+        const base64Data = slide.imageDataUrl.split(",")[1];
         if (!base64Data) {
-          logger.error(LOG_SOURCE, "Could not extract base64 data from slide image");
+          logger.error(
+            LOG_SOURCE,
+            "Could not extract base64 data from slide image"
+          );
           return;
         }
         const imageBlob: GenAI_Blob = {
           data: base64Data,
-          mimeType: 'image/png',
+          mimeType: "image/png",
         };
         // Send image first
         session.sendRealtimeInput({ media: imageBlob });
 
         // If there's canvas content, send it as text context
         if (slide.canvasContent && slide.canvasContent.length > 0) {
-          const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(slide.canvasContent)}`;
+          const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
+            slide.canvasContent
+          )}`;
           session.sendRealtimeInput({ text: canvasText });
         }
       });
     } else {
-        logger.warn(LOG_SOURCE, 'sendSlideImageContext called but session promise is null.');
+      logger.warn(
+        LOG_SOURCE,
+        "sendSlideImageContext called but session promise is null."
+      );
     }
   }, []);
 
-  const requestExplanation = useCallback((slide: Slide) => {
-    logger.debug(LOG_SOURCE, `requestExplanation called for slide ${slide.pageNumber}`);
-    sendSlideImageContext(slide);
-    const contextMessage = `**USER ACTION: MANUAL SLIDE CHANGE**\nThe user has manually selected and is now viewing slide number ${slide.pageNumber}. Your task is to explain the content of this new slide.`;
-    sendTextMessage(contextMessage);
-  }, [sendSlideImageContext, sendTextMessage]);
-
+  const requestExplanation = useCallback(
+    (slide: Slide) => {
+      logger.debug(
+        LOG_SOURCE,
+        `requestExplanation called for slide ${slide.pageNumber}`
+      );
+      sendSlideImageContext(slide);
+      const contextMessage = `**USER ACTION: MANUAL SLIDE CHANGE**\nThe user has manually selected and is now viewing slide number ${slide.pageNumber}. Your task is to explain the content of this new slide.`;
+      sendTextMessage(contextMessage);
+    },
+    [sendSlideImageContext, sendTextMessage]
+  );
 
   const startLecture = useCallback(() => {
-    logger.log(LOG_SOURCE, 'startLecture() called.');
+    logger.log(LOG_SOURCE, "startLecture() called.");
     if (slides.length === 0) {
-      logger.warn(LOG_SOURCE, 'startLecture() called with 0 slides. Aborting.');
+      logger.warn(LOG_SOURCE, "startLecture() called with 0 slides. Aborting.");
       return;
     }
 
     cleanupConnectionResources();
     setSessionState(LectureSessionState.CONNECTING);
     setError(null);
-    
+
     const ai = new GoogleGenAI({ apiKey: apiKey ?? process.env.API_KEY! });
-    outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-    
+    outputAudioContextRef.current = new (window.AudioContext ||
+      (window as any).webkitAudioContext)({ sampleRate: 24000 });
+
     const isReconnect = transcript.length > 0;
 
     const sessionConfig = {
@@ -203,8 +283,17 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
         responseModalities: [Modality.AUDIO],
         inputAudioTranscription: {},
         outputAudioTranscription: {},
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } } },
-        tools: [{ functionDeclarations: [setActiveSlideFunctionDeclaration, renderCanvasFunctionDeclaration] }],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
+        },
+        tools: [
+          {
+            functionDeclarations: [
+              setActiveSlideFunctionDeclaration,
+              renderCanvasFunctionDeclaration,
+            ],
+          },
+        ],
         systemInstruction: `You are an AI lecturer. Your primary task is to explain a presentation, slide-by-slide, in ${selectedLanguage}.
 
         **General Information about the presentation:**
@@ -251,67 +340,84 @@ export const useGeminiLive = ({ slides, generalInfo, transcript, setTranscript, 
       },
     };
 
-    logger.debug(LOG_SOURCE, 'Connecting to Gemini Live...');
-    
+    logger.debug(LOG_SOURCE, "Connecting to Gemini Live...");
+
     const sessionPromise = ai.live.connect({
       ...sessionConfig,
       callbacks: {
         onopen: async () => {
-          logger.log(LOG_SOURCE, 'Session opened successfully.');
+          logger.log(LOG_SOURCE, "Session opened successfully.");
           try {
-            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContextRef.current = new (window.AudioContext ||
+              (window as any).webkitAudioContext)({ sampleRate: 16000 });
+            const stream = await navigator.mediaDevices.getUserMedia({
+              audio: true,
+            });
             mediaStreamRef.current = stream;
-            logger.debug(LOG_SOURCE, 'Microphone stream acquired.');
+            logger.debug(LOG_SOURCE, "Microphone stream acquired.");
 
-            const source = audioContextRef.current.createMediaStreamSource(stream);
+            const source =
+              audioContextRef.current.createMediaStreamSource(stream);
             mediaStreamSourceRef.current = source;
 
-            const scriptProcessor = audioContextRef.current.createScriptProcessor(4096, 1, 1);
+            const scriptProcessor =
+              audioContextRef.current.createScriptProcessor(4096, 1, 1);
             scriptProcessorRef.current = scriptProcessor;
 
             scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
               if (isMutedRef.current) return;
-              const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+              const inputData =
+                audioProcessingEvent.inputBuffer.getChannelData(0);
 
               const bufferLength = inputData.length;
               const pcm16 = new Int16Array(bufferLength);
               for (let i = 0; i < bufferLength; i++) {
                 pcm16[i] = inputData[i] * 32768;
               }
-              
+
               const pcmBlob: GenAI_Blob = {
-                  data: encode(new Uint8Array(pcm16.buffer)),
-                  mimeType: 'audio/pcm;rate=16000',
+                data: encode(new Uint8Array(pcm16.buffer)),
+                mimeType: "audio/pcm;rate=16000",
               };
 
               sessionPromise.then((session) => {
                 session.sendRealtimeInput({ media: pcmBlob });
               });
             };
-            
+
             const gainNode = audioContextRef.current.createGain();
             gainNode.gain.value = 0;
             source.connect(scriptProcessor);
             scriptProcessor.connect(gainNode);
             gainNode.connect(audioContextRef.current.destination);
-            
+
             setSessionState(LectureSessionState.READY);
-            
-            const lecturePlanForAI = slides.map(s => (
-                `Slide ${s.pageNumber}: ${s.summary}`
-            )).join('\n');
-            
+
+            const lecturePlanForAI = slides
+              .map((s) => `Slide ${s.pageNumber}: ${s.summary}`)
+              .join("\n");
+
             if (isReconnect) {
-                logger.log(LOG_SOURCE, 'Reconnecting. Sending concise context to resume.');
-                const recentHistory = transcript.slice(-4).map(entry => `${entry.speaker === 'user' ? 'User' : 'Lecturer'}: ${entry.text}`).join('\n\n');
-                const currentSlideNumber = currentSlideIndex + 1;
-                
-                // Send the image of the current slide first for visual context.
-                sendSlideImageContext(slides[currentSlideIndex]);
-                
-                // Construct a more direct and forceful prompt for the AI to resume.
-                const contextMessage = `**URGENT INSTRUCTION: RESUME LECTURE FROM DISCONNECT**
+              logger.log(
+                LOG_SOURCE,
+                "Reconnecting. Sending concise context to resume."
+              );
+              const recentHistory = transcript
+                .slice(-4)
+                .map(
+                  (entry) =>
+                    `${entry.speaker === "user" ? "User" : "Lecturer"}: ${
+                      entry.text
+                    }`
+                )
+                .join("\n\n");
+              const currentSlideNumber = currentSlideIndex + 1;
+
+              // Send the image of the current slide first for visual context.
+              sendSlideImageContext(slides[currentSlideIndex]);
+
+              // Construct a more direct and forceful prompt for the AI to resume.
+              const contextMessage = `**URGENT INSTRUCTION: RESUME LECTURE FROM DISCONNECT**
 Your session has just been reconnected. All previous state is reset.
 
 **CRITICAL CONTEXT:**
@@ -322,211 +428,341 @@ ${recentHistory}
 **YOUR IMMEDIATE TASK:**
 Resume the lecture from exactly where you left off on Slide ${currentSlideNumber}. Do not greet the user or re-introduce the topic. Start explaining the content of the current slide immediately.`;
 
-                sendTextMessage(contextMessage);
+              sendTextMessage(contextMessage);
             } else {
-                // For a new lecture, send context and instructions separately for clarity.
-                sendSlideImageContext(slides[0]);
+              // For a new lecture, send context and instructions separately for clarity.
+              sendSlideImageContext(slides[0]);
 
-                // First, send the lecture plan as context.
-                const contextMessage = `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`;
-                sendTextMessage(contextMessage);
+              // First, send the lecture plan as context.
+              const contextMessage = `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`;
+              sendTextMessage(contextMessage);
 
-                // Then, send a clear instruction to begin.
-                const instructionMessage = `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`;
-                sendTextMessage(instructionMessage);
-                logger.debug(LOG_SOURCE, 'Sent initial context and instruction to AI for a new lecture.');
+              // Then, send a clear instruction to begin.
+              const instructionMessage = `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`;
+              sendTextMessage(instructionMessage);
+              logger.debug(
+                LOG_SOURCE,
+                "Sent initial context and instruction to AI for a new lecture."
+              );
             }
-
           } catch (err) {
-              logger.error(LOG_SOURCE, 'Microphone access denied or error:', err);
-              setError('Microphone access is required. Please allow microphone permissions and refresh.');
-              setSessionState(LectureSessionState.ERROR);
-              end();
+            logger.error(LOG_SOURCE, "Microphone access denied or error:", err);
+            setError(
+              "Microphone access is required. Please allow microphone permissions and refresh."
+            );
+            setSessionState(LectureSessionState.ERROR);
+            end();
           }
         },
         onmessage: async (message: LiveServerMessage) => {
-            if (message.serverContent) {
-                setSessionState(LectureSessionState.LECTURING);
-            }
-            if (message.serverContent?.inputTranscription) {
-                setSessionState(LectureSessionState.LISTENING);
-            }
+          if (message.serverContent) {
+            setSessionState(LectureSessionState.LECTURING);
+          }
+          if (message.serverContent?.inputTranscription) {
+            setSessionState(LectureSessionState.LISTENING);
+          }
 
-            if (message.toolCall) {
-              logger.debug(LOG_SOURCE, 'Received tool call:', message.toolCall);
-              for (const fc of message.toolCall.functionCalls) {
-                if (fc.name === 'setActiveSlide') {
-                  const slideNumber = fc.args.slideNumber as number;
-                  logger.log(LOG_SOURCE, `Processing setActiveSlide function call for slide number: ${slideNumber}`);
-                  if (slideNumber >= 1 && slideNumber <= slides.length) {
-                    onSlideChange(slideNumber);
-                    sendSlideImageContext(slides[slideNumber - 1]);
+          if (message.toolCall) {
+            logger.debug(LOG_SOURCE, "Received tool call:", message.toolCall);
+            for (const fc of message.toolCall.functionCalls) {
+              if (fc.name === "setActiveSlide") {
+                const slideNumber = fc.args.slideNumber as number;
+                logger.log(
+                  LOG_SOURCE,
+                  `Processing setActiveSlide function call for slide number: ${slideNumber}`
+                );
+                if (slideNumber >= 1 && slideNumber <= slides.length) {
+                  // Update the slide index ref immediately to ensure transcript tagging uses the latest slide
+                  currentSlideIndexRef.current = slideNumber - 1;
+                  onSlideChange(slideNumber);
+                  sendSlideImageContext(slides[slideNumber - 1]);
+                  sessionPromise.then((session) => {
+                    session.sendToolResponse({
+                      functionResponses: {
+                        id: fc.id,
+                        name: fc.name,
+                        response: {
+                          result: `OK. Changed to slide ${slideNumber}.`,
+                        },
+                      },
+                    });
+                  });
+                } else {
+                  logger.error(
+                    LOG_SOURCE,
+                    `AI requested invalid slide number: ${slideNumber}`
+                  );
+                  sessionPromise.then((session) => {
+                    session.sendToolResponse({
+                      functionResponses: {
+                        id: fc.id,
+                        name: fc.name,
+                        response: {
+                          error: `Invalid slide number: ${slideNumber}. There are only ${slides.length} slides.`,
+                        },
+                      },
+                    });
+                  });
+                }
+              } else if (fc.name === "renderCanvas") {
+                let parsedArgs = fc.args;
+                if (typeof parsedArgs === "string") {
+                  try {
+                    parsedArgs = JSON.parse(parsedArgs);
+                  } catch (e) {
+                    logger.error(
+                      LOG_SOURCE,
+                      "Failed to parse stringified function call arguments for renderCanvas",
+                      e
+                    );
                     sessionPromise.then((session) => {
                       session.sendToolResponse({
                         functionResponses: {
                           id: fc.id,
                           name: fc.name,
-                          response: { result: `OK. Changed to slide ${slideNumber}.` },
-                        }
+                          response: {
+                            error: `Invalid arguments format: failed to parse JSON string.`,
+                          },
+                        },
                       });
                     });
-                  } else {
-                    logger.error(LOG_SOURCE, `AI requested invalid slide number: ${slideNumber}`);
-                    sessionPromise.then((session) => {
-                      session.sendToolResponse({
-                        functionResponses: {
-                          id: fc.id,
-                          name: fc.name,
-                          response: { error: `Invalid slide number: ${slideNumber}. There are only ${slides.length} slides.` },
-                        }
-                      });
-                    });
+                    continue;
                   }
-                } else if (fc.name === 'renderCanvas') {
-                    let parsedArgs = fc.args;
-                    if (typeof parsedArgs === 'string') {
-                      try {
-                        parsedArgs = JSON.parse(parsedArgs);
-                      } catch (e) {
-                        logger.error(LOG_SOURCE, "Failed to parse stringified function call arguments for renderCanvas", e);
-                        sessionPromise.then((session) => {
-                          session.sendToolResponse({
-                            functionResponses: {
-                              id: fc.id,
-                              name: fc.name,
-                              response: { error: `Invalid arguments format: failed to parse JSON string.` },
-                            }
-                          });
-                        });
-                        continue;
-                      }
-                    }
+                }
 
-                    const contentBlocks = parsedArgs?.contentBlocks as CanvasBlock[];
-                    
-                    if (contentBlocks && Array.isArray(contentBlocks)) {
-                        logger.log(LOG_SOURCE, `Processing renderCanvas function call.`);
-                        onRenderCanvas(contentBlocks);
-                        sessionPromise.then((session) => {
-                          session.sendToolResponse({
-                            functionResponses: {
-                              id: fc.id,
-                              name: fc.name,
-                              response: { result: `OK. Canvas content has been rendered.` },
-                            }
-                          });
-                        });
-                    } else {
-                        logger.error(LOG_SOURCE, `Invalid 'contentBlocks' received in renderCanvas call`, parsedArgs);
-                        sessionPromise.then((session) => {
-                          session.sendToolResponse({
-                            functionResponses: {
-                              id: fc.id,
-                              name: fc.name,
-                              response: { error: `Invalid arguments: 'contentBlocks' was missing or not an array.` },
-                            }
-                          });
-                        });
-                    }
+                const contentBlocks =
+                  parsedArgs?.contentBlocks as CanvasBlock[];
+
+                if (contentBlocks && Array.isArray(contentBlocks)) {
+                  logger.log(
+                    LOG_SOURCE,
+                    `Processing renderCanvas function call.`
+                  );
+                  onRenderCanvas(contentBlocks);
+                  sessionPromise.then((session) => {
+                    session.sendToolResponse({
+                      functionResponses: {
+                        id: fc.id,
+                        name: fc.name,
+                        response: {
+                          result: `OK. Canvas content has been rendered.`,
+                        },
+                      },
+                    });
+                  });
+                } else {
+                  logger.error(
+                    LOG_SOURCE,
+                    `Invalid 'contentBlocks' received in renderCanvas call`,
+                    parsedArgs
+                  );
+                  sessionPromise.then((session) => {
+                    session.sendToolResponse({
+                      functionResponses: {
+                        id: fc.id,
+                        name: fc.name,
+                        response: {
+                          error: `Invalid arguments: 'contentBlocks' was missing or not an array.`,
+                        },
+                      },
+                    });
+                  });
                 }
               }
             }
+          }
 
-            if (message.serverContent?.inputTranscription) {
-              const text = message.serverContent.inputTranscription.text;
-              setTranscript(prev => {
-                  const newTranscript = [...prev];
-                  const lastEntry = newTranscript[newTranscript.length - 1];
-                  if (lastEntry?.speaker === 'user') {
-                      lastEntry.text += text;
-                  } else {
-                      newTranscript.push({ speaker: 'user', text });
-                  }
-                  return newTranscript;
-              });
-            }
-    
-            if (message.serverContent?.outputTranscription) {
-                const text = message.serverContent.outputTranscription.text;
-                setTranscript(prev => {
-                    const newTranscript = [...prev];
-                    const lastEntry = newTranscript[newTranscript.length - 1];
-                    if (lastEntry?.speaker === 'ai') {
-                        lastEntry.text += text;
-                    } else {
-                        newTranscript.push({ speaker: 'ai', text });
-                    }
-                    return newTranscript;
-                });
-            }
-
-            const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (audioData && outputAudioContextRef.current) {
-                const outputCtx = outputAudioContextRef.current;
-                nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
-                const audioBuffer = await decodeAudioData(decode(audioData), outputCtx, 24000, 1);
-                const source = outputCtx.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(outputCtx.destination);
-                source.addEventListener('ended', () => { audioSourcesRef.current.delete(source); });
-                source.start(nextStartTimeRef.current);
-                nextStartTimeRef.current += audioBuffer.duration;
-                audioSourcesRef.current.add(source);
-            }
-
-            if (message.serverContent?.interrupted) {
-                logger.debug(LOG_SOURCE, 'AI speech was interrupted. Clearing audio queue.');
-                for (const source of audioSourcesRef.current.values()) {
-                    source.stop();
+          if (message.serverContent?.inputTranscription) {
+            const text = message.serverContent.inputTranscription.text;
+            setTranscript((prev) => {
+              const newTranscript = [...prev];
+              const lastEntry = newTranscript[newTranscript.length - 1];
+              if (lastEntry?.speaker === "user") {
+                const trimmed = text.trim();
+                // Skip if this chunk already appears at the end of the last user entry
+                if ((lastEntry.text || "").endsWith(trimmed)) {
+                  return prev;
                 }
-                audioSourcesRef.current.clear();
-                nextStartTimeRef.current = 0;
+                // Replace with latest transcript-so-far to avoid duplicate words
+                const prevText = lastEntry.text || "";
+                if (text.startsWith(prevText)) {
+                  lastEntry.text = text;
+                } else if (prevText.startsWith(text)) {
+                  // keep prevText (no change)
+                } else {
+                  // fallback: append if server is sending pure deltas
+                  lastEntry.text = prevText + text;
+                }
+              } else {
+                newTranscript.push({ speaker: "user", text });
+              }
+              return newTranscript;
+            });
+          }
+
+          if (message.serverContent?.outputTranscription) {
+            const text = message.serverContent.outputTranscription.text;
+            setTranscript((prev) => {
+              const newTranscript = [...prev];
+              const lastEntry = newTranscript[newTranscript.length - 1];
+              if (aiMessageOpenRef.current && lastEntry?.speaker === "ai") {
+                const trimmed = text.trim();
+                // Skip if this chunk already appears at the end of the last AI entry
+                if ((lastEntry.text || "").endsWith(trimmed)) {
+                  return prev;
+                }
+                // Replace with latest transcript-so-far to avoid duplicate words
+                const prevText = lastEntry.text || "";
+                if (text.startsWith(prevText)) {
+                  lastEntry.text = text;
+                } else if (prevText.startsWith(text)) {
+                  // keep prevText (no change)
+                } else {
+                  // fallback: append if server is sending pure deltas
+                  lastEntry.text = prevText + text;
+                }
+              } else {
+                newTranscript.push({
+                  speaker: "ai",
+                  text,
+                  slideNumber: currentSlideIndexRef.current + 1,
+                });
+                aiMessageOpenRef.current = true;
+              }
+              return newTranscript;
+            });
+          }
+
+          const audioData =
+            message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+          if (audioData && outputAudioContextRef.current) {
+            const outputCtx = outputAudioContextRef.current;
+            nextStartTimeRef.current = Math.max(
+              nextStartTimeRef.current,
+              outputCtx.currentTime
+            );
+            const audioBuffer = await decodeAudioData(
+              decode(audioData),
+              outputCtx,
+              24000,
+              1
+            );
+            const source = outputCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(outputCtx.destination);
+            source.addEventListener("ended", () => {
+              audioSourcesRef.current.delete(source);
+            });
+            source.start(nextStartTimeRef.current);
+            nextStartTimeRef.current += audioBuffer.duration;
+            audioSourcesRef.current.add(source);
+          }
+
+          if (message.serverContent?.generationComplete) {
+            // Primary delimiter: model finished generating this response
+            aiMessageOpenRef.current = false;
+          }
+
+          if (message.serverContent?.turnComplete) {
+            // Backup delimiter
+            aiMessageOpenRef.current = false;
+          }
+
+          if (message.serverContent?.interrupted) {
+            logger.debug(
+              LOG_SOURCE,
+              "AI speech was interrupted. Clearing audio queue."
+            );
+            for (const source of audioSourcesRef.current.values()) {
+              source.stop();
             }
+            audioSourcesRef.current.clear();
+            nextStartTimeRef.current = 0;
+            // Treat interruption as end of current message box
+            aiMessageOpenRef.current = false;
+          }
         },
         onerror: (e: ErrorEvent) => {
-          logger.error(LOG_SOURCE, 'Session error event received.', e);
-          setError('A connection error occurred. Please try to reconnect.');
+          logger.error(LOG_SOURCE, "Session error event received.", e);
+          setError("A connection error occurred. Please try to reconnect.");
           cleanupConnectionResources();
           setSessionState(LectureSessionState.DISCONNECTED);
         },
         onclose: (e: CloseEvent) => {
-          logger.warn(LOG_SOURCE, 'Session close event received. Code:', e.code, 'Reason:', e.reason, 'wasClean:', e.wasClean);
+          logger.warn(
+            LOG_SOURCE,
+            "Session close event received. Code:",
+            e.code,
+            "Reason:",
+            e.reason,
+            "wasClean:",
+            e.wasClean
+          );
           if (!e.wasClean) {
-            setError('The connection was lost unexpectedly. Please reconnect.');
+            setError("The connection was lost unexpectedly. Please reconnect.");
             cleanupConnectionResources();
             setSessionState(LectureSessionState.DISCONNECTED);
           }
         },
-      }
+      },
     });
 
     sessionPromiseRef.current = sessionPromise;
-  }, [slides, generalInfo, transcript, setTranscript, sendTextMessage, selectedLanguage, selectedVoice, selectedModel, onSlideChange, onRenderCanvas, sendSlideImageContext, apiKey, cleanupConnectionResources, currentSlideIndex]);
+  }, [
+    slides,
+    generalInfo,
+    transcript,
+    setTranscript,
+    sendTextMessage,
+    selectedLanguage,
+    selectedVoice,
+    selectedModel,
+    onSlideChange,
+    onRenderCanvas,
+    sendSlideImageContext,
+    apiKey,
+    cleanupConnectionResources,
+    currentSlideIndex,
+  ]);
 
   const replay = useCallback(() => {
-    logger.debug(LOG_SOURCE, 'replay() called.');
+    logger.debug(LOG_SOURCE, "replay() called.");
     sendTextMessage("Please repeat your explanation for this slide.");
   }, [sendTextMessage]);
   const next = useCallback(() => {
-    logger.debug(LOG_SOURCE, 'next() called.');
+    logger.debug(LOG_SOURCE, "next() called.");
     sendTextMessage("Go to the next slide and explain it.");
   }, [sendTextMessage]);
   const previous = useCallback(() => {
-    logger.debug(LOG_SOURCE, 'previous() called.');
+    logger.debug(LOG_SOURCE, "previous() called.");
     sendTextMessage("Go to the previous slide and explain it.");
   }, [sendTextMessage]);
-  const goToSlide = useCallback((slideNumber: number) => {
-    logger.debug(LOG_SOURCE, `goToSlide(${slideNumber}) called.`);
-    sendTextMessage(`Go to slide number ${slideNumber} and explain it.`);
-  }, [sendTextMessage]);
+  const goToSlide = useCallback(
+    (slideNumber: number) => {
+      logger.debug(LOG_SOURCE, `goToSlide(${slideNumber}) called.`);
+      sendTextMessage(`Go to slide number ${slideNumber} and explain it.`);
+    },
+    [sendTextMessage]
+  );
 
   useEffect(() => {
-    logger.log(LOG_SOURCE, 'Hook initialized.');
+    logger.log(LOG_SOURCE, "Hook initialized.");
     return () => {
-      logger.log(LOG_SOURCE, 'Hook unmounting, ensuring session is ended.');
+      logger.log(LOG_SOURCE, "Hook unmounting, ensuring session is ended.");
       end();
     };
   }, [end]);
 
-  return { sessionState, startLecture, replay, next, previous, end, error, goToSlide, sendTextMessage, requestExplanation };
+  return {
+    sessionState,
+    startLecture,
+    replay,
+    next,
+    previous,
+    end,
+    error,
+    goToSlide,
+    sendTextMessage,
+    requestExplanation,
+  };
 };
