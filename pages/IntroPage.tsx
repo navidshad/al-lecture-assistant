@@ -64,6 +64,7 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart, apiKey, onApiKeyS
   const [loadingText, setLoadingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const isUploadDisabled = isParsing || !apiKey || apiKey.trim().length === 0;
   
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     try {
@@ -123,6 +124,10 @@ const IntroPage: React.FC<IntroPageProps> = ({ onLectureStart, apiKey, onApiKeyS
   ];
 
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!apiKey || apiKey.trim().length === 0) {
+      setError('Please add your API key in Settings to enable upload.');
+      return;
+    }
     const file = event.target.files?.[0];
     if (file) {
       logger.log(LOG_SOURCE, 'File selected:', file.name);
@@ -283,7 +288,12 @@ Slide 2:
       </div>
       
       <div className="w-full max-w-2xl">
-        <label htmlFor="pdf-upload" className="relative block w-full h-64 border-2 border-dashed border-gray-600 rounded-lg cursor-pointer hover:border-blue-500 transition-colors duration-300 bg-gray-800/50">
+        <label
+          htmlFor="pdf-upload"
+          className={`relative block w-full h-64 border-2 border-dashed rounded-lg transition-colors duration-300 bg-gray-800/50 ${isUploadDisabled ? 'border-gray-700 opacity-60 cursor-not-allowed' : 'border-gray-600 hover:border-blue-500 cursor-pointer'}`}
+          aria-disabled={isUploadDisabled}
+          title={isUploadDisabled ? 'Add your API key in Settings to enable upload' : undefined}
+        >
           <div className="flex flex-col items-center justify-center h-full">
             {isParsing ? (
               <>
@@ -293,14 +303,30 @@ Slide 2:
             ) : (
               <>
                 <UploadCloudIcon className="h-16 w-16 text-gray-500" />
-                <p className="mt-4 text-lg text-gray-400">
-                  <span className="font-semibold text-blue-400">Click to upload</span> or drag and drop
-                </p>
-                <p className="text-sm text-gray-500">PDF files only</p>
+                {isUploadDisabled ? (
+                  <>
+                    <p className="mt-4 text-lg text-gray-400 text-center">
+                      Add your API key in <span className="font-semibold text-blue-400">Settings</span> to enable upload.
+                    </p>
+                    <button
+                      onClick={(e) => { e.preventDefault(); setIsConfigOpen(true); }}
+                      className="mt-3 px-4 py-2 bg-gray-700 text-white font-semibold rounded-lg hover:bg-gray-600 transition-colors"
+                    >
+                      Open Settings
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-4 text-lg text-gray-400">
+                      <span className="font-semibold text-blue-400">Click to upload</span> or drag and drop
+                    </p>
+                    <p className="text-sm text-gray-500">PDF files only</p>
+                  </>
+                )}
               </>
             )}
           </div>
-          <input id="pdf-upload" type="file" accept=".pdf" className="sr-only" onChange={handleFileChange} disabled={isParsing} />
+          <input id="pdf-upload" type="file" accept=".pdf" className="sr-only" onChange={handleFileChange} disabled={isUploadDisabled} />
         </label>
         {error && <p className="text-red-500 mt-4 text-center">{error}</p>}
       </div>
