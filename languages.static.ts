@@ -110,3 +110,5 @@ export const SUPPORTED_LANGUES = [
   { title: "Yoruba", code: "yo" },
   { title: "Zulu", code: "zu" },
 ];
+
+

@@ -73,8 +73,9 @@ Slide 2:
 
       const textPart = { text: prompt };
 
-      // Using the same access pattern as existing code for compatibility
-      const response: any = await ai.models.generateContent({
+      // Using a minimal response typing for compatibility with current SDK shape
+      type GenerateContentResponseLike = { text: string };
+      const response: GenerateContentResponseLike = await (ai.models.generateContent as any)({
         model: 'gemini-2.5-pro',
         contents: { parts: [textPart, pdfPart] },
       });

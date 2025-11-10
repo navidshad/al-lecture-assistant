@@ -1,4 +1,4 @@
-import { SUPPORTED_LANGUES } from '../langueges.static';
+import { SUPPORTED_LANGUES } from '../languages.static';
 
 // Provide a correctly spelled export for new code
 export const SUPPORTED_LANGUAGES = SUPPORTED_LANGUES;

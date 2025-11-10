@@ -9,6 +9,7 @@ import { logger } from "../services/logger";
 import { sessionManager } from "../services/db";
 import { useLecturePlan } from "../hooks/useLecturePlan";
 import FileUploadBox from "../components/Intro/FileUploadBox";
+import { useLocalStorage } from "../utils/storage";
 
 const LOG_SOURCE = "IntroPage";
 
@@ -32,50 +33,19 @@ const IntroPage: React.FC<IntroPageProps> = ({
 }) => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 
-  const [selectedLanguage, setSelectedLanguage] = useState(() => {
-    try {
-      const storedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-      if (
-        storedLanguage &&
-        SUPPORTED_LANGUAGES.some((l) => l.title === storedLanguage)
-      ) {
-        return storedLanguage;
-      }
-    } catch (e) {
-      console.error("Failed to read language from local storage", e);
-    }
-    return "English";
-  });
+  const [selectedLanguage, setSelectedLanguage] = useLocalStorage<string>(LANGUAGE_STORAGE_KEY, "English");
 
-  const [selectedVoice, setSelectedVoice] = useState(() => {
-    try {
-      const storedVoice = localStorage.getItem(VOICE_STORAGE_KEY);
-      if (storedVoice) {
-        return storedVoice;
-      }
-    } catch (e) {
-      console.error("Failed to read voice from local storage", e);
-    }
-    return "Zephyr";
-  });
+  const [selectedVoice, setSelectedVoice] = useLocalStorage<string>(VOICE_STORAGE_KEY, "Zephyr");
 
   const [selectedModel, setSelectedModel] = useState(MODELS[0].id);
 
+  // Ensure language remains valid if list updates
   useEffect(() => {
-    try {
-      localStorage.setItem(LANGUAGE_STORAGE_KEY, selectedLanguage);
-    } catch (e) {
-      console.error("Failed to save language to local storage", e);
+    if (!SUPPORTED_LANGUAGES.some((l) => l.title === selectedLanguage)) {
+      setSelectedLanguage("English");
     }
-  }, [selectedLanguage]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(VOICE_STORAGE_KEY, selectedVoice);
-    } catch (e) {
-      console.error("Failed to save voice to local storage", e);
-    }
-  }, [selectedVoice]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { isLoading, loadingText, error, createSessionFromPdf } =
     useLecturePlan({
