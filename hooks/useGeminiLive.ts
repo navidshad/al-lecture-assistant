@@ -578,7 +578,16 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
               const newTranscript = [...prev];
               const lastEntry = newTranscript[newTranscript.length - 1];
               if (lastEntry?.speaker === "user") {
-                lastEntry.text += text;
+                // Replace with latest transcript-so-far to avoid duplicate words
+                const prevText = lastEntry.text || "";
+                if (text.startsWith(prevText)) {
+                  lastEntry.text = text;
+                } else if (prevText.startsWith(text)) {
+                  // keep prevText (no change)
+                } else {
+                  // fallback: append if server is sending pure deltas
+                  lastEntry.text = prevText + text;
+                }
               } else {
                 newTranscript.push({ speaker: "user", text });
               }
@@ -592,7 +601,16 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
               const newTranscript = [...prev];
               const lastEntry = newTranscript[newTranscript.length - 1];
               if (aiMessageOpenRef.current && lastEntry?.speaker === "ai") {
-                lastEntry.text += text;
+                // Replace with latest transcript-so-far to avoid duplicate words
+                const prevText = lastEntry.text || "";
+                if (text.startsWith(prevText)) {
+                  lastEntry.text = text;
+                } else if (prevText.startsWith(text)) {
+                  // keep prevText (no change)
+                } else {
+                  // fallback: append if server is sending pure deltas
+                  lastEntry.text = prevText + text;
+                }
               } else {
                 newTranscript.push({
                   speaker: "ai",
