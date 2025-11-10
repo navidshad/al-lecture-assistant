@@ -61,22 +61,30 @@ export function useLecturePlan({
           },
         };
 
-        const prompt = `You are an expert instructional designer. Analyze the provided PDF document and generate a concise lecture plan in the following format.
-- Do NOT add any markdown formatting like \`\`\` or bolding.
-- The output must be plain text.
-- The description for "general info" should be a single paragraph.
-- The description for each slide must be a single sentence.
+        const prompt = `You are an expert instructional designer. Analyze the provided PDF and return ONLY the following lines in plain text (no markdown, no extra commentary).
+
+- general info: A brief overview of the entire presentation in 1–2 sentences, MAX 200 characters total.
+- Slide N: The main message of slide N in exactly 1 short sentence, MAX 90 characters. Repeat for all slides.
+
+STRICT REQUIREMENTS:
+- Use exactly these labels: "general info:" and "Slide N:" (e.g., Slide 1:, Slide 2:)
+- Do not add bullets, numbering beyond "Slide N:", or blank lines between items
+- Do not exceed the character caps; if needed, abbreviate but keep meaning
+- Do not include information not visible in the slides
+- Do NOT use filler/openers such as: "in this slide", "this slide shows", "on slide N", "we will", "let’s", "here we", "the following"; write the main message directly.
+
+Format:
 
 general info:
-<Provide a brief, one-paragraph overview of the entire presentation's purpose and key takeaways.>
+<1–2 sentences, ≤200 chars>
 
 Slide 1:
-<Provide a one-sentence description of the content on this slide.>
+<1 sentence main message, ≤90 chars>
 
 Slide 2:
-<Provide a one-sentence description of the content on this slide.>
+<1 sentence main message, ≤90 chars>
 
-... continue for all slides in the document.`;
+... continue for all slides`;
 
         const textPart = { text: prompt };
 
