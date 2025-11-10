@@ -55,8 +55,13 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({ isVisible, onClose, t
             {transcript.map((entry, index) => (
               <div key={index} className={`flex items-start ${isDesktop ? 'gap-3' : 'gap-2'}`}>
                 <div className={`flex-shrink-0 rounded-full flex items-center justify-center ${isDesktop ? 'h-8 w-8' : 'h-6 w-6'} ${entry.speaker === 'user' ? 'bg-blue-600' : 'bg-purple-600'}`}>
-                    {entry.speaker === 'user' ? <User className={isDesktop ? 'h-5 w-5' : 'h-3 w-3'} /> : <Bot className={isDesktop ? 'h-5 w-5' : 'h-3 w-3'} />}
+                  {entry.speaker === 'user' ? <User className={isDesktop ? 'h-5 w-5' : 'h-3 w-3'} /> : <Bot className={isDesktop ? 'h-5 w-5' : 'h-3 w-3'} />}
                 </div>
+                {entry.speaker === 'ai' && entry.slideNumber != null && (
+                  <span className={`flex-shrink-0 inline-flex items-center ${isDesktop ? 'px-2 py-0.5 text-xs' : 'px-1.5 py-0.5 text-[10px]'} rounded-md bg-gray-600 text-gray-200`}>
+                    Slide {entry.slideNumber}
+                  </span>
+                )}
                 <div className={`flex-1 bg-gray-700 rounded-lg ${isDesktop ? 'p-3' : 'p-2'}`}>
                   <p className={`text-gray-200 ${isDesktop ? '' : 'text-xs'}`}>{entry.text}</p>
                 </div>
