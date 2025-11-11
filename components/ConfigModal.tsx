@@ -61,7 +61,7 @@ const ConfigModal: React.FC<ConfigModalProps> = ({ isOpen, onClose, selectedVoic
                 className="w-full appearance-none rounded-lg border border-gray-600 bg-gray-700 py-2.5 pl-10 pr-4 text-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {voices.map(voice => (
-                  <option key={voice.name} value={voice.name}>{voice.description}</option>
+                  <option key={voice.name} value={voice.name}>{`${voice.name} — ${voice.description}`}</option>
                 ))}
               </select>
             </div>

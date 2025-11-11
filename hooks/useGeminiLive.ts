@@ -373,6 +373,9 @@ export const useGeminiLive = ({
         - Use the 'setActiveSlide' function to change slides ONLY when instructed by the user (e.g., when they say "next slide" or "go to slide 5").
         - CRITICAL: After successfully changing slides via 'setActiveSlide', you MUST immediately start explaining the new slide's content without waiting for any user prompt.
         - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Just start explaining the new content of the requested slide.
+        - Focus on the ACTIVE slide. Do not discuss other slides or future content unless the user asks, but you can address content in other slides by mentioning the slide number.
+        - If the user asks about a different slide, give a concise answer or teaser and ASK whether to switch: e.g., "Would you like me to jump to slide 7?" Do NOT change slides unless the user explicitly instructs.
+        - When asked about another slide, avoid giving the full explanation until you are on that slide. Keep it short and then return to the current slide unless the user confirms switching.
         - When presenting tabular data on the canvas, you MUST use a 'contentBlock' with type 'table'. Do not put tables inside 'markdown' blocks.
         - **Function Call Response Handling:** After a tool call is confirmed as successful, do not repeat your previous statement. For example, if you state you are rendering a diagram and the \`renderCanvas\` tool call is successful, do not announce it again. Acknowledge the success silently and continue the conversation naturally.
         
