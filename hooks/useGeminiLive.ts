@@ -290,9 +290,6 @@ export const useGeminiLive = ({
         try {
           session.sendRealtimeInput?.({ event: "response.cancel" });
         } catch {}
-        try {
-          session.sendRealtimeInput?.({ event: "end_of_turn" });
-        } catch {}
       });
     }
   }, []);
@@ -409,6 +406,85 @@ export const useGeminiLive = ({
     [buildSlideMemory, sendTextMessage]
   );
 
+  const sendSlideContextTurn = useCallback(
+    (slide: Slide, transcriptNow: TranscriptEntry[]) => {
+      logger.debug(
+        LOG_SOURCE,
+        `sendSlideContextTurn called for slide ${slide.pageNumber}`
+      );
+      const seq = ++slideChangeSeqRef.current;
+      if (!sessionOpenRef.current) {
+        logger.warn(
+          LOG_SOURCE,
+          "Attempted to send slide context but session is not open. Ignoring."
+        );
+        return;
+      }
+      if (!sessionPromiseRef.current) {
+        logger.warn(
+          LOG_SOURCE,
+          "sendSlideContextTurn called but session promise is null."
+        );
+        return;
+      }
+
+      const base64Data = slide.imageDataUrl.split(",")[1];
+      if (!base64Data) {
+        logger.error(
+          LOG_SOURCE,
+          "Could not extract base64 data from slide image"
+        );
+        return;
+      }
+      const imageBlob: GenAI_Blob = {
+        data: base64Data,
+        mimeType: "image/png",
+      };
+
+      const keyTurns = buildSlideMemory(
+        transcriptNow,
+        slide.pageNumber,
+        12,
+        1800
+      );
+      const anchor = [
+        `ACTIVE SLIDE: ${slide.pageNumber}`,
+        slide.summary ? `SUMMARY: ${slide.summary}` : null,
+        slide.textContent
+          ? `TEXT EXCERPT: ${slide.textContent.slice(0, 1000)}`
+          : null,
+        keyTurns ? `KEY POINTS SO FAR:\n${keyTurns}` : null,
+        `FOCUS: Explain ONLY slide ${slide.pageNumber}.`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      runWithOpenSession((session) => {
+        // Image first
+        if (seq !== slideChangeSeqRef.current) return;
+        session.sendRealtimeInput({ media: imageBlob });
+
+        // Canvas context second (optional)
+        if (slide.canvasContent && slide.canvasContent.length > 0) {
+          const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
+            slide.canvasContent
+          )}`;
+          if (seq !== slideChangeSeqRef.current) return;
+          session.sendRealtimeInput({ text: canvasText });
+        }
+
+        // Anchor last
+        if (seq !== slideChangeSeqRef.current) return;
+        session.sendRealtimeInput({ text: anchor });
+
+        // End of turn to produce one coherent response
+        if (seq !== slideChangeSeqRef.current) return;
+        session.sendRealtimeInput({ event: "end_of_turn" });
+      });
+    },
+    [buildSlideMemory, runWithOpenSession]
+  );
+
   const requestExplanation = useCallback(
     (slide: Slide) => {
       logger.debug(
@@ -417,10 +493,9 @@ export const useGeminiLive = ({
       );
       // Stop any ongoing output before changing context
       flushOutput();
-      sendSlideImageContext(slide);
-      sendStrongSlideAnchor(slide, transcript);
+      sendSlideContextTurn(slide, transcript);
     },
-    [flushOutput, sendSlideImageContext, sendStrongSlideAnchor, transcript]
+    [flushOutput, sendSlideContextTurn, transcript]
   );
 
   const startLecture = useCallback(() => {
@@ -625,6 +700,12 @@ export const useGeminiLive = ({
                 LOG_SOURCE,
                 "Sent initial context and instruction to AI for a new lecture."
               );
+              // Ensure the model starts one coherent response for the initial inputs
+              runWithOpenSession((session) => {
+                try {
+                  session.sendRealtimeInput?.({ event: "end_of_turn" });
+                } catch {}
+              });
             }
           } catch (err) {
             logger.error(LOG_SOURCE, "Microphone access denied or error:", err);
@@ -660,7 +741,8 @@ export const useGeminiLive = ({
                   // Interrupt any ongoing output before changing context
                   flushOutput();
                   onSlideChange(slideNumber);
-                  sendSlideImageContext(slides[slideNumber - 1]);
+                  // Send all slide context inputs atomically as one turn
+                  sendSlideContextTurn(slides[slideNumber - 1], transcript);
                   runWithOpenSession((session) => {
                     session.sendToolResponse({
                       functionResponses: {
@@ -672,8 +754,6 @@ export const useGeminiLive = ({
                       },
                     });
                   });
-                  // Send a strong textual anchor so the model focuses on the new slide
-                  sendStrongSlideAnchor(slides[slideNumber - 1], transcript);
                 } else {
                   logger.error(
                     LOG_SOURCE,
