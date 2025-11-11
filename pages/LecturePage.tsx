@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   Slide,
   TranscriptEntry,
@@ -351,16 +351,23 @@ const LecturePage: React.FC<LecturePageProps> = ({
     }
   }, [currentSlideIndex, previous]);
 
+  const SLIDE_CHANGE_DEBOUNCE_MS = 200;
+  const slideChangeTimerRef = useRef<number | undefined>();
   const handleSelectSlide = useCallback(
     (index: number) => {
       logger.debug(LOG_SOURCE, `handleSelectSlide called for index ${index}.`);
-      if (index !== currentSlideIndex) {
-        setCurrentSlideIndex(index);
-        const slide = slides[index];
-        if (slide && requestExplanation) {
-          requestExplanation(slide);
-        }
+      if (slideChangeTimerRef.current) {
+        window.clearTimeout(slideChangeTimerRef.current);
       }
+      slideChangeTimerRef.current = window.setTimeout(() => {
+        if (index !== currentSlideIndex) {
+          setCurrentSlideIndex(index);
+          const slide = slides[index];
+          if (slide && requestExplanation) {
+            requestExplanation(slide);
+          }
+        }
+      }, SLIDE_CHANGE_DEBOUNCE_MS);
     },
     [currentSlideIndex, slides, requestExplanation]
   );

@@ -180,6 +180,12 @@ export const useGeminiLive = ({
   const currentSlideIndexRef = useRef(currentSlideIndex);
   // Track if the underlying websocket/session is open to prevent sending on a closed socket
   const sessionOpenRef = useRef(false);
+  // Sequence guard for slide-change related async sends
+  const slideChangeSeqRef = useRef(0);
+  // Counter for periodic re-anchoring during long conversations
+  const turnCounterRef = useRef(0);
+  // Tunables
+  const REANCHOR_EVERY_N_TURNS = 6; // set 0 to disable
 
   const setSessionState = (newState: LectureSessionState) => {
     _setSessionState((prevState) => {
@@ -254,6 +260,31 @@ export const useGeminiLive = ({
     setSessionState(LectureSessionState.ENDED);
   }, [cleanupConnectionResources]);
 
+  const ENABLE_SERVER_INTERRUPT = true;
+  const flushOutput = useCallback(() => {
+    // stop queued TTS locally
+    for (const source of audioSourcesRef.current.values()) {
+      try {
+        source.stop();
+      } catch {}
+    }
+    audioSourcesRef.current.clear();
+    nextStartTimeRef.current = 0;
+    // Treat as end of current AI message box
+    aiMessageOpenRef.current = false;
+    // Best-effort server-side interruption if supported (no-op otherwise)
+    if (ENABLE_SERVER_INTERRUPT && sessionOpenRef.current && sessionPromiseRef.current) {
+      sessionPromiseRef.current.then((session) => {
+        try {
+          session.sendRealtimeInput?.({ event: "response.cancel" });
+        } catch {}
+        try {
+          session.sendRealtimeInput?.({ event: "end_of_turn" });
+        } catch {}
+      });
+    }
+  }, []);
+
   const sendTextMessage = useCallback((text: string) => {
     logger.debug(LOG_SOURCE, "sendTextMessage called.");
     if (!sessionOpenRef.current) {
@@ -280,6 +311,7 @@ export const useGeminiLive = ({
       LOG_SOURCE,
       `sendSlideImageContext called for slide ${slide.pageNumber}`
     );
+    const seq = ++slideChangeSeqRef.current;
     if (!sessionOpenRef.current) {
       logger.warn(
         LOG_SOURCE,
@@ -302,6 +334,7 @@ export const useGeminiLive = ({
           mimeType: "image/png",
         };
         // Send image first
+        if (seq !== slideChangeSeqRef.current) return;
         session.sendRealtimeInput({ media: imageBlob });
 
         // If there's canvas content, send it as text context
@@ -309,6 +342,7 @@ export const useGeminiLive = ({
           const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
             slide.canvasContent
           )}`;
+          if (seq !== slideChangeSeqRef.current) return;
           session.sendRealtimeInput({ text: canvasText });
         }
       });
@@ -320,17 +354,61 @@ export const useGeminiLive = ({
     }
   }, []);
 
+  const buildSlideMemory = useCallback(
+    (
+      entries: TranscriptEntry[],
+      slideNumber: number,
+      maxTurns: number = 12,
+      maxChars: number = 1800
+    ) => {
+      const filtered = entries.filter(
+        (e) =>
+          (e.slideNumber ?? currentSlideIndexRef.current + 1) === slideNumber
+      );
+      const recent = filtered.slice(-maxTurns);
+      let text = recent
+        .map((e) => `${e.speaker === "user" ? "User" : "Lecturer"}: ${e.text}`)
+        .join("\n");
+      if (text.length > maxChars) {
+        text = text.slice(-maxChars);
+      }
+      return text;
+    },
+    []
+  );
+
+  const sendStrongSlideAnchor = useCallback(
+    (slide: Slide, transcriptNow: TranscriptEntry[]) => {
+      const slideNo = slide.pageNumber;
+      const keyTurns = buildSlideMemory(transcriptNow, slideNo, 12, 1800);
+      const anchor = [
+        `ACTIVE SLIDE: ${slideNo}`,
+        slide.summary ? `SUMMARY: ${slide.summary}` : null,
+        slide.textContent
+          ? `TEXT EXCERPT: ${slide.textContent.slice(0, 1000)}`
+          : null,
+        keyTurns ? `KEY POINTS SO FAR:\n${keyTurns}` : null,
+        `FOCUS: Explain ONLY slide ${slideNo}.`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      sendTextMessage(anchor);
+    },
+    [buildSlideMemory, sendTextMessage]
+  );
+
   const requestExplanation = useCallback(
     (slide: Slide) => {
       logger.debug(
         LOG_SOURCE,
         `requestExplanation called for slide ${slide.pageNumber}`
       );
+      // Stop any ongoing output before changing context
+      flushOutput();
       sendSlideImageContext(slide);
-      const contextMessage = `**USER ACTION: MANUAL SLIDE CHANGE**\nThe user has manually selected and is now viewing slide number ${slide.pageNumber}. Your task is to explain the content of this new slide.`;
-      sendTextMessage(contextMessage);
+      sendStrongSlideAnchor(slide, transcript);
     },
-    [sendSlideImageContext, sendTextMessage]
+    [flushOutput, sendSlideImageContext, sendStrongSlideAnchor, transcript]
   );
 
   const startLecture = useCallback(() => {
@@ -395,6 +473,8 @@ export const useGeminiLive = ({
         - When asked about another slide, avoid giving the full explanation until you are on that slide. Keep it short and then return to the current slide unless the user confirms switching.
         - When presenting tabular data on the canvas, you MUST use a 'contentBlock' with type 'table'. Do not put tables inside 'markdown' blocks.
         - **Function Call Response Handling:** After a tool call is confirmed as successful, do not repeat your previous statement. For example, if you state you are rendering a diagram and the \`renderCanvas\` tool call is successful, do not announce it again. Acknowledge the success silently and continue the conversation naturally.
+        - When you see an anchor line \`ACTIVE SLIDE: N\` or after a successful \`setActiveSlide\` tool call, immediately switch context to slide N and continue ONLY with that slide. Do not finish or reference the previous slide unless asked.
+        - If the user asks about another slide without switching, give a brief teaser and ask whether to switch. Do not change slides or fully explain it until confirmed.
         
         **Style:**
         - Speak naturally like a confident human instructor guiding a class.
@@ -513,33 +593,11 @@ export const useGeminiLive = ({
                 LOG_SOURCE,
                 "Reconnecting. Sending concise context to resume."
               );
-              const recentHistory = transcript
-                .slice(-4)
-                .map(
-                  (entry) =>
-                    `${entry.speaker === "user" ? "User" : "Lecturer"}: ${
-                      entry.text
-                    }`
-                )
-                .join("\n\n");
               const currentSlideNumber = currentSlideIndex + 1;
-
               // Send the image of the current slide first for visual context.
               sendSlideImageContext(slides[currentSlideIndex]);
-
-              // Construct a more direct and forceful prompt for the AI to resume.
-              const contextMessage = `**URGENT INSTRUCTION: RESUME LECTURE FROM DISCONNECT**
-Your session has just been reconnected. All previous state is reset.
-
-**CRITICAL CONTEXT:**
-- The user is now viewing **Slide ${currentSlideNumber}**. The slide's image has been provided to you.
-- The recent conversation history is:
-${recentHistory}
-
-**YOUR IMMEDIATE TASK:**
-Resume the lecture from exactly where you left off on Slide ${currentSlideNumber}. Do not greet the user or re-introduce the topic. Start explaining the content of the current slide immediately.`;
-
-              sendTextMessage(contextMessage);
+              // Strongly re-anchor to the current slide
+              sendStrongSlideAnchor(slides[currentSlideIndex], transcript);
             } else {
               // For a new lecture, send context and instructions separately for clarity.
               sendSlideImageContext(slides[0]);
@@ -587,6 +645,8 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
                 if (slideNumber >= 1 && slideNumber <= slides.length) {
                   // Update the slide index ref immediately to ensure transcript tagging uses the latest slide
                   currentSlideIndexRef.current = slideNumber - 1;
+                  // Interrupt any ongoing output before changing context
+                  flushOutput();
                   onSlideChange(slideNumber);
                   sendSlideImageContext(slides[slideNumber - 1]);
                   sessionPromise.then((session) => {
@@ -600,6 +660,8 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
                       },
                     });
                   });
+                  // Send a strong textual anchor so the model focuses on the new slide
+                  sendStrongSlideAnchor(slides[slideNumber - 1], transcript);
                 } else {
                   logger.error(
                     LOG_SOURCE,
@@ -782,6 +844,16 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
           if (message.serverContent?.generationComplete) {
             // Primary delimiter: model finished generating this response
             aiMessageOpenRef.current = false;
+            // Periodically re-anchor to the active slide during long conversations
+            if (REANCHOR_EVERY_N_TURNS > 0) {
+              turnCounterRef.current += 1;
+              if (turnCounterRef.current % REANCHOR_EVERY_N_TURNS === 0) {
+                const slide = slides[currentSlideIndexRef.current];
+                if (slide) {
+                  sendStrongSlideAnchor(slide, transcript);
+                }
+              }
+            }
           }
 
           if (message.serverContent?.turnComplete) {

@@ -20,7 +20,12 @@ export const parsePdf = async (file: File): Promise<ParsedSlide[]> => {
 
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 1.5 });
+          // Adaptive scaling to improve small-text readability while bounding image size
+          const baseViewport = page.getViewport({ scale: 1.0 });
+          const IMAGE_MAX_SIDE_PX = 2200; // longest side target in px (cap bandwidth)
+          const longestSide = Math.max(baseViewport.width, baseViewport.height);
+          const scale = Math.min(3, Math.max(1.5, IMAGE_MAX_SIDE_PX / longestSide));
+          const viewport = page.getViewport({ scale });
           
           // Create canvas to render page
           const canvas = document.createElement('canvas');
