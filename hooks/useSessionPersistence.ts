@@ -10,8 +10,10 @@ export function useSessionPersistence(params: {
   slides: LectureSession["slides"];
   transcript: LectureSession["transcript"];
   currentSlideIndex: number;
+  slideGroups?: LectureSession["slideGroups"];
 }) {
-  const { session, slides, transcript, currentSlideIndex } = params;
+  const { session, slides, transcript, currentSlideIndex, slideGroups } =
+    params;
 
   const saveSessionState = useCallback(async () => {
     logger.debug(LOG_SOURCE, "Saving session state to DB.");
@@ -20,13 +22,14 @@ export function useSessionPersistence(params: {
       slides,
       transcript,
       currentSlideIndex,
+      slideGroups,
     };
     try {
       await sessionManager.updateSession(updatedSession);
     } catch (e) {
       logger.error(LOG_SOURCE, "Failed to save session state", e);
     }
-  }, [session, slides, transcript, currentSlideIndex]);
+  }, [session, slides, transcript, currentSlideIndex, slideGroups]);
 
   useEffect(() => {
     const debounceTimeout = setTimeout(saveSessionState, 2000);

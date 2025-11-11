@@ -54,7 +54,9 @@ const LecturePage: React.FC<LecturePageProps> = ({
 
   const [activeTab, setActiveTab] = useState<"slide" | "canvas">("slide");
   const [isCanvasFixing, setIsCanvasFixing] = useState(false);
-  const [slideGroups, setSlideGroups] = useState<SlideGroup[] | null>(null);
+  const [slideGroups, setSlideGroups] = useState<SlideGroup[] | null>(
+    session.slideGroups ?? null
+  );
   const [isGroupingLoading, setIsGroupingLoading] = useState(false);
   const [isGroupingEnabled] = useLocalStorage<boolean>(
     "ai-lecture-assistant-group-slides",
@@ -68,6 +70,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
     slides,
     transcript,
     currentSlideIndex,
+    slideGroups: slideGroups ?? undefined,
   });
 
   const setCurrentSlideIndex = (updater: React.SetStateAction<number>) => {
@@ -107,6 +110,15 @@ const LecturePage: React.FC<LecturePageProps> = ({
         setSlideGroups(null);
         return;
       }
+      // Already grouped in memory
+      if (slideGroups && slideGroups.length > 0) {
+        return;
+      }
+      // Reuse saved groups if available on the session
+      if (session.slideGroups && session.slideGroups.length > 0) {
+        setSlideGroups(session.slideGroups);
+        return;
+      }
       try {
         setIsGroupingLoading(true);
         const groups = await groupSlidesByAI({
@@ -133,7 +145,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isGroupingEnabled, slides, apiKey, session.lectureConfig.model]);
+  }, [isGroupingEnabled, slides, apiKey, session.lectureConfig.model, session.slideGroups, slideGroups]);
 
   const handleTranscriptToggle = useCallback(() => {
     if (window.innerWidth < 768) {

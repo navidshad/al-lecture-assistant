@@ -26,6 +26,7 @@ export interface LectureSession {
   transcript: TranscriptEntry[];
   currentSlideIndex: number;
   lectureConfig: LectureConfig;
+  slideGroups?: SlideGroup[];
 }
 
 
