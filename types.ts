@@ -51,3 +51,8 @@ export interface CanvasBlock {
   type: CanvasBlockType;
   content: string;
 }
+
+export interface SlideGroup {
+  title: string;
+  slideNumbers: number[];
+}

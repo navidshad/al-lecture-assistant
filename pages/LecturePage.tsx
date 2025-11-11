@@ -5,6 +5,7 @@ import {
   LectureSessionState,
   CanvasBlock,
   LectureSession,
+  SlideGroup,
 } from "../types";
 import { useGeminiLive } from "../hooks/useGeminiLive";
 import { useToast } from "../hooks/useToast";
@@ -19,6 +20,9 @@ import TopBar from "../components/Lecture/TopBar";
 import TabNav from "../components/Lecture/TabNav";
 import SlidesThumbStrip from "../components/Lecture/SlidesThumbStrip";
 import { useSessionPersistence } from "../hooks/useSessionPersistence";
+import GroupedSlidesThumbStrip from "../components/Lecture/GroupedSlidesThumbStrip";
+import { groupSlidesByAI } from "../services/slideGrouper";
+import { useLocalStorage } from "../utils/storage";
 
 const LOG_SOURCE = "LecturePage";
 
@@ -50,6 +54,12 @@ const LecturePage: React.FC<LecturePageProps> = ({
 
   const [activeTab, setActiveTab] = useState<"slide" | "canvas">("slide");
   const [isCanvasFixing, setIsCanvasFixing] = useState(false);
+  const [slideGroups, setSlideGroups] = useState<SlideGroup[] | null>(null);
+  const [isGroupingLoading, setIsGroupingLoading] = useState(false);
+  const [isGroupingEnabled] = useLocalStorage<boolean>(
+    "ai-lecture-assistant-group-slides",
+    false
+  );
 
   const { showToast } = useToast();
 
@@ -89,6 +99,41 @@ const LecturePage: React.FC<LecturePageProps> = ({
     window.addEventListener("resize", checkDesktop);
     return () => window.removeEventListener("resize", checkDesktop);
   }, [session.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const maybeGroupSlides = async () => {
+      if (!isGroupingEnabled) {
+        setSlideGroups(null);
+        return;
+      }
+      try {
+        setIsGroupingLoading(true);
+        const groups = await groupSlidesByAI({
+          slides,
+          apiKey,
+        });
+        if (!cancelled) {
+          setSlideGroups(groups);
+        }
+      } catch (e) {
+        logger.warn(
+          LOG_SOURCE,
+          "Slide grouping failed, falling back to flat list.",
+          e as any
+        );
+        if (!cancelled) {
+          setSlideGroups(null);
+        }
+      } finally {
+        if (!cancelled) setIsGroupingLoading(false);
+      }
+    };
+    maybeGroupSlides();
+    return () => {
+      cancelled = true;
+    };
+  }, [isGroupingEnabled, slides, apiKey, session.lectureConfig.model]);
 
   const handleTranscriptToggle = useCallback(() => {
     if (window.innerWidth < 768) {
@@ -444,13 +489,24 @@ const LecturePage: React.FC<LecturePageProps> = ({
               }`}
             >
               <div className="h-full bg-gray-800/50 rounded-lg border border-gray-700 p-2 overflow-x-auto flex items-center space-x-2">
-                <SlidesThumbStrip
-                  slides={slides}
-                  currentIndex={currentSlideIndex}
-                  onSelect={handleSelectSlide}
-                  itemClassName="flex-shrink-0 h-full aspect-[4/3]"
-                  imageClassName="w-full h-full object-cover"
-                />
+                {isGroupingEnabled && slideGroups ? (
+                  <div className="w-full">
+                    <GroupedSlidesThumbStrip
+                      slides={slides}
+                      groups={slideGroups}
+                      currentIndex={currentSlideIndex}
+                      onSelect={handleSelectSlide}
+                    />
+                  </div>
+                ) : (
+                  <SlidesThumbStrip
+                    slides={slides}
+                    currentIndex={currentSlideIndex}
+                    onSelect={handleSelectSlide}
+                    itemClassName="flex-shrink-0 h-full aspect-[4/3]"
+                    imageClassName="w-full h-full object-cover"
+                  />
+                )}
               </div>
             </div>
           </main>
@@ -508,14 +564,27 @@ const LecturePage: React.FC<LecturePageProps> = ({
         {isSlidesVisible && (
           <>
             <h2 className="text-sm font-semibold text-gray-400 p-2 flex-shrink-0">
-              Slides
+              {isGroupingEnabled ? "Slides (Grouped)" : "Slides"}
             </h2>
             <div className="flex-1 space-y-2 overflow-y-auto">
-              <SlidesThumbStrip
-                slides={slides}
-                currentIndex={currentSlideIndex}
-                onSelect={handleSelectSlide}
-              />
+              {isGroupingLoading ? (
+                <div className="text-xs text-gray-400 p-2">
+                  Grouping slides…
+                </div>
+              ) : isGroupingEnabled && slideGroups ? (
+                <GroupedSlidesThumbStrip
+                  slides={slides}
+                  groups={slideGroups}
+                  currentIndex={currentSlideIndex}
+                  onSelect={handleSelectSlide}
+                />
+              ) : (
+                <SlidesThumbStrip
+                  slides={slides}
+                  currentIndex={currentSlideIndex}
+                  onSelect={handleSelectSlide}
+                />
+              )}
             </div>
           </>
         )}

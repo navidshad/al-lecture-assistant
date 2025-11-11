@@ -24,6 +24,7 @@ interface IntroPageProps {
 const LANGUAGE_STORAGE_KEY = "ai-lecture-assistant-language";
 const VOICE_STORAGE_KEY = "ai-lecture-assistant-voice";
 const PROMPT_STORAGE_KEY = "ai-lecture-assistant-custom-prompt";
+const GROUP_SLIDES_STORAGE_KEY = "ai-lecture-assistant-group-slides";
 
 const IntroPage: React.FC<IntroPageProps> = ({
   onLectureStart,
@@ -49,6 +50,11 @@ const IntroPage: React.FC<IntroPageProps> = ({
   const [userCustomPrompt, setUserCustomPrompt] = useLocalStorage<string>(
     PROMPT_STORAGE_KEY,
     ""
+  );
+
+  const [groupSlides, setGroupSlides] = useLocalStorage<boolean>(
+    GROUP_SLIDES_STORAGE_KEY,
+    false
   );
 
   // Ensure language remains valid if list updates
@@ -187,6 +193,18 @@ const IntroPage: React.FC<IntroPageProps> = ({
           placeholder="E.g., focus on real-world examples, emphasize definitions, avoid heavy math, target beginners..."
           className="w-full rounded-lg border border-gray-600 bg-gray-700 px-4 py-3 text-white placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[96px] resize-y"
         />
+      </div>
+
+      <div className="w-full max-w-2xl mb-4">
+        <label className="inline-flex items-center space-x-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={groupSlides}
+            onChange={(e) => setGroupSlides(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+          />
+          <span className="text-sm text-gray-300">Group slides by AI (UI only)</span>
+        </label>
       </div>
 
       <div className="w-full max-w-2xl">
