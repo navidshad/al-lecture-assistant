@@ -132,7 +132,6 @@ const parseTable = (markdown: string): string => {
 };
 
 const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
-
   if (!content || content.length === 0) {
     return (
       <div className="relative w-full h-full bg-black rounded-lg shadow-2xl flex items-center justify-center overflow-auto border border-gray-700 p-6">

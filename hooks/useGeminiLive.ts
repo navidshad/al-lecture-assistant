@@ -692,6 +692,14 @@ export const useGeminiLive = ({
                   });
                 }
               } else if (fc.name === "renderCanvas") {
+                logger.log(
+                  LOG_SOURCE,
+                  "renderCanvas raw args:",
+                  fc.args,
+                  "(type:",
+                  typeof fc.args,
+                  ")"
+                );
                 let parsedArgs = fc.args;
                 if (typeof parsedArgs === "string") {
                   try {
@@ -718,9 +726,20 @@ export const useGeminiLive = ({
                   }
                 }
 
+                logger.log(LOG_SOURCE, "renderCanvas parsed args:", parsedArgs);
                 const candidate =
                   (parsedArgs as any)?.contentBlocks ?? parsedArgs;
+                logger.log(
+                  LOG_SOURCE,
+                  "renderCanvas candidate contentBlocks:",
+                  candidate
+                );
                 const contentBlocks = normalizeCanvasBlocks(candidate);
+                logger.log(
+                  LOG_SOURCE,
+                  "renderCanvas normalized markdown blocks:",
+                  contentBlocks
+                );
 
                 if (contentBlocks.length > 0) {
                   logger.log(
@@ -747,7 +766,7 @@ export const useGeminiLive = ({
                   );
                   onRenderCanvas([
                     {
-                      type: "ascii",
+                      type: "markdown",
                       content: JSON.stringify(parsedArgs, null, 2),
                     },
                   ]);
