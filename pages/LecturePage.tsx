@@ -49,6 +49,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
   const [isSlidesVisible, setIsSlidesVisible] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"slide" | "canvas">("slide");
+  const [isCanvasFixing, setIsCanvasFixing] = useState(false);
 
   const { showToast } = useToast();
 
@@ -130,7 +131,9 @@ const LecturePage: React.FC<LecturePageProps> = ({
   const handleRenderCanvas = useCallback(
     (contentBlocks: CanvasBlock[], targetSlideIndex?: number) => {
       const indexToUpdate =
-        typeof targetSlideIndex === "number" ? targetSlideIndex : currentSlideIndex;
+        typeof targetSlideIndex === "number"
+          ? targetSlideIndex
+          : currentSlideIndex;
       logger.log(
         LOG_SOURCE,
         `Received request to render canvas content for slide index ${indexToUpdate}.`
@@ -147,6 +150,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
         return newSlides;
       });
       setActiveTab("canvas");
+      setIsCanvasFixing(false);
     },
     [currentSlideIndex]
   );
@@ -177,6 +181,63 @@ const LecturePage: React.FC<LecturePageProps> = ({
     apiKey,
     currentSlideIndex,
   });
+
+  const handleCanvasRenderError = useCallback(
+    (args: { blocks: CanvasBlock[]; error: unknown }) => {
+      logger.warn(
+        LOG_SOURCE,
+        "Canvas rendering error detected. Initiating auto-fix.",
+        args.error
+      );
+      setIsCanvasFixing(true);
+
+      const rawPayload = JSON.stringify(
+        {
+          slideNumber: currentSlideIndex + 1,
+          receivedBlocks: args.blocks,
+          error: String(
+            (args.error as any)?.message || args.error || "unknown"
+          ),
+        },
+        null,
+        2
+      );
+
+      if (typeof requestExplanation === "function") {
+        const instruction =
+          `The canvas content failed to render on slide ${
+            currentSlideIndex + 1
+          }.\n` +
+          `Here is the raw payload and error:\n\n` +
+          "```json\n" +
+          rawPayload +
+          "\n```\n\n" +
+          "Please fix the content and call the tool 'renderCanvas' with a valid 'contentBlocks' array using only these types: 'markdown', 'diagram', 'ascii', 'table'.\n" +
+          "If you use 'diagram', ensure it is valid Mermaid syntax (e.g., starts with 'graph', 'sequenceDiagram', etc.).\n" +
+          "Do not include commentary in the canvas; only call the tool.";
+
+        const slide = slides[currentSlideIndex];
+        if (slide) {
+          requestExplanation(slide);
+        }
+        if (typeof sendTextMessage === "function") {
+          sendTextMessage(instruction);
+        }
+      } else if (typeof sendTextMessage === "function") {
+        const instruction =
+          `The canvas content failed to render on slide ${
+            currentSlideIndex + 1
+          }.\n` +
+          `Raw payload and error:\n\n` +
+          "```json\n" +
+          rawPayload +
+          "\n```\n\n" +
+          "Fix and call tool 'renderCanvas' with a valid 'contentBlocks' array. Only use types: 'markdown', 'diagram', 'ascii', 'table'.";
+        sendTextMessage(instruction);
+      }
+    },
+    [currentSlideIndex, slides, requestExplanation, sendTextMessage]
+  );
 
   useEffect(() => {
     if (error) {
@@ -355,7 +416,11 @@ const LecturePage: React.FC<LecturePageProps> = ({
                     activeTab === "canvas" ? "block" : "hidden"
                   } w-full h-full`}
                 >
-                  <CanvasViewer content={currentCanvasContent} />
+                  <CanvasViewer
+                    content={currentCanvasContent}
+                    isFixing={isCanvasFixing}
+                    onRenderError={handleCanvasRenderError}
+                  />
                 </div>
               </div>
             </div>
