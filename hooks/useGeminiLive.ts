@@ -178,6 +178,8 @@ export const useGeminiLive = ({
   const isMutedRef = useRef(isMuted);
   const aiMessageOpenRef = useRef(false);
   const currentSlideIndexRef = useRef(currentSlideIndex);
+  // Track if the underlying websocket/session is open to prevent sending on a closed socket
+  const sessionOpenRef = useRef(false);
 
   const setSessionState = (newState: LectureSessionState) => {
     _setSessionState((prevState) => {
@@ -247,12 +249,20 @@ export const useGeminiLive = ({
   // FIX: Renamed disconnect to end to match what's being returned and used in LecturePage.
   const end = useCallback(() => {
     logger.log(LOG_SOURCE, "end() called. Performing full cleanup.");
+    sessionOpenRef.current = false;
     cleanupConnectionResources();
     setSessionState(LectureSessionState.ENDED);
   }, [cleanupConnectionResources]);
 
   const sendTextMessage = useCallback((text: string) => {
     logger.debug(LOG_SOURCE, "sendTextMessage called.");
+    if (!sessionOpenRef.current) {
+      logger.warn(
+        LOG_SOURCE,
+        "Attempted to send text but session is not open. Ignoring."
+      );
+      return;
+    }
     if (sessionPromiseRef.current) {
       sessionPromiseRef.current.then((session) => {
         session.sendRealtimeInput({ text });
@@ -270,6 +280,13 @@ export const useGeminiLive = ({
       LOG_SOURCE,
       `sendSlideImageContext called for slide ${slide.pageNumber}`
     );
+    if (!sessionOpenRef.current) {
+      logger.warn(
+        LOG_SOURCE,
+        "Attempted to send slide image but session is not open. Ignoring."
+      );
+      return;
+    }
     if (sessionPromiseRef.current) {
       sessionPromiseRef.current.then((session) => {
         const base64Data = slide.imageDataUrl.split(",")[1];
@@ -417,25 +434,49 @@ export const useGeminiLive = ({
       callbacks: {
         onopen: async () => {
           logger.log(LOG_SOURCE, "Session opened successfully.");
+          sessionOpenRef.current = true;
           try {
             audioContextRef.current = new (window.AudioContext ||
               (window as any).webkitAudioContext)({ sampleRate: 16000 });
             const stream = await navigator.mediaDevices.getUserMedia({
               audio: true,
             });
+            // It's possible the session was closed while awaiting getUserMedia.
+            if (!sessionOpenRef.current) {
+              try {
+                stream.getTracks().forEach((t) => t.stop());
+              } catch {}
+              logger.warn(
+                LOG_SOURCE,
+                "getUserMedia resolved after session closed. Aborting audio init."
+              );
+              return;
+            }
             mediaStreamRef.current = stream;
             logger.debug(LOG_SOURCE, "Microphone stream acquired.");
 
-            const source =
-              audioContextRef.current.createMediaStreamSource(stream);
+            const ctx = audioContextRef.current;
+            if (!ctx) {
+              // Audio context may have been closed by cleanup during a race.
+              try {
+                stream.getTracks().forEach((t) => t.stop());
+              } catch {}
+              logger.warn(
+                LOG_SOURCE,
+                "AudioContext missing during onopen. Aborting audio init."
+              );
+              return;
+            }
+
+            const source = ctx.createMediaStreamSource(stream);
             mediaStreamSourceRef.current = source;
 
-            const scriptProcessor =
-              audioContextRef.current.createScriptProcessor(4096, 1, 1);
+            const scriptProcessor = ctx.createScriptProcessor(4096, 1, 1);
             scriptProcessorRef.current = scriptProcessor;
 
             scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-              if (isMutedRef.current) return;
+              // Do not attempt to stream audio if muted or session is not open
+              if (isMutedRef.current || !sessionOpenRef.current) return;
               const inputData =
                 audioProcessingEvent.inputBuffer.getChannelData(0);
 
@@ -520,8 +561,10 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
             setError(
               "Microphone access is required. Please allow microphone permissions and refresh."
             );
+            sessionOpenRef.current = false;
+            // Cleanup but keep the session in an error state rather than "ENDED"
+            cleanupConnectionResources();
             setSessionState(LectureSessionState.ERROR);
-            end();
           }
         },
         onmessage: async (message: LiveServerMessage) => {
@@ -762,6 +805,7 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
         },
         onerror: (e: ErrorEvent) => {
           logger.error(LOG_SOURCE, "Session error event received.", e);
+          sessionOpenRef.current = false;
           setError("A connection error occurred. Please try to reconnect.");
           cleanupConnectionResources();
           setSessionState(LectureSessionState.DISCONNECTED);
@@ -776,11 +820,13 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
             "wasClean:",
             e.wasClean
           );
+          // Regardless of clean/unclean close, stop streaming and require reconnect
+          sessionOpenRef.current = false;
           if (!e.wasClean) {
             setError("The connection was lost unexpectedly. Please reconnect.");
-            cleanupConnectionResources();
-            setSessionState(LectureSessionState.DISCONNECTED);
           }
+          cleanupConnectionResources();
+          setSessionState(LectureSessionState.DISCONNECTED);
         },
       },
     });

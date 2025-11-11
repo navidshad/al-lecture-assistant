@@ -227,6 +227,16 @@ const LecturePage: React.FC<LecturePageProps> = ({
     currentSlideIndex,
   });
 
+  // If the connection dropped and the user unmutes, auto-reconnect
+  useEffect(() => {
+    if (!isMuted && sessionState === LectureSessionState.DISCONNECTED) {
+      logger.log(
+        LOG_SOURCE,
+        "Microphone unmuted while disconnected. Auto-reconnecting."
+      );
+      startLecture();
+    }
+  }, [isMuted, sessionState, startLecture]);
   const handleCanvasRenderError = useCallback(
     (args: { blocks: CanvasBlock[]; error: unknown }) => {
       logger.warn(
