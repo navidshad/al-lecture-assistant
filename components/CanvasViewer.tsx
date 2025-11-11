@@ -178,7 +178,15 @@ const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
               />
             );
           default:
-            return null;
+            return (
+              <pre key={index} className="bg-gray-900 p-4 rounded-md overflow-x-auto text-sm w-full">
+                <code className="font-mono text-white whitespace-pre">
+                  {typeof (block as any)?.content === 'string'
+                    ? (block as any).content
+                    : JSON.stringify(block, null, 2)}
+                </code>
+              </pre>
+            );
         }
       })}
     </div>

@@ -26,6 +26,57 @@ import { logger } from "../services/logger";
 
 const LOG_SOURCE = "useGeminiLive";
 
+const normalizeCanvasBlocks = (input: any): CanvasBlock[] => {
+  const supported = new Set(["markdown", "diagram", "ascii", "table"]);
+
+  const coerceItem = (item: any): CanvasBlock | null => {
+    if (item == null) return null;
+
+    if (typeof item === "string") {
+      return { type: "ascii", content: item };
+    }
+
+    if (typeof item === "object") {
+      const content =
+        typeof item.content === "string"
+          ? item.content
+          : JSON.stringify(item, null, 2);
+
+      let type = typeof item.type === "string" ? item.type.toLowerCase() : "";
+
+      if (!supported.has(type)) {
+        const looksMarkdown = /[#*_`]|^\s*-\s+|\|\s*.+\s*\|/.test(content);
+        type = looksMarkdown ? "markdown" : "ascii";
+      }
+
+      return { type: type as CanvasBlock["type"], content };
+    }
+
+    return { type: "ascii", content: String(item) };
+  };
+
+  if (
+    input &&
+    !Array.isArray(input) &&
+    (typeof input === "object" || typeof input === "string")
+  ) {
+    const coerced = coerceItem(input);
+    return coerced ? [coerced] : [];
+  }
+
+  if (Array.isArray(input)) {
+    return (input.map(coerceItem).filter(Boolean) as CanvasBlock[]) || [];
+  }
+
+  return [
+    {
+      type: "ascii",
+      content:
+        typeof input === "string" ? input : JSON.stringify(input, null, 2),
+    },
+  ];
+};
+
 interface UseGeminiLiveProps {
   slides: Slide[];
   generalInfo: string;
@@ -37,7 +88,10 @@ interface UseGeminiLiveProps {
   selectedModel: string;
   userCustomPrompt?: string;
   onSlideChange: (slideNumber: number) => void;
-  onRenderCanvas: (contentBlocks: CanvasBlock[]) => void;
+  onRenderCanvas: (
+    contentBlocks: CanvasBlock[],
+    targetSlideIndex?: number
+  ) => void;
   apiKey: string | null;
   currentSlideIndex: number;
 }
@@ -522,19 +576,20 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
                 if (typeof parsedArgs === "string") {
                   try {
                     parsedArgs = JSON.parse(parsedArgs);
-                  } catch (e) {
-                    logger.error(
+                  } catch {
+                    logger.warn(
                       LOG_SOURCE,
-                      "Failed to parse stringified function call arguments for renderCanvas",
-                      e
+                      "Failed to parse JSON args for renderCanvas; rendering raw args as ascii"
                     );
+                    const fallbackBlocks = normalizeCanvasBlocks(parsedArgs);
+                    onRenderCanvas(fallbackBlocks);
                     sessionPromise.then((session) => {
                       session.sendToolResponse({
                         functionResponses: {
                           id: fc.id,
                           name: fc.name,
                           response: {
-                            error: `Invalid arguments format: failed to parse JSON string.`,
+                            result: `Rendered fallback 'ascii' block from raw string args.`,
                           },
                         },
                       });
@@ -543,15 +598,16 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
                   }
                 }
 
-                const contentBlocks =
-                  parsedArgs?.contentBlocks as CanvasBlock[];
+                const candidate =
+                  (parsedArgs as any)?.contentBlocks ?? parsedArgs;
+                const contentBlocks = normalizeCanvasBlocks(candidate);
 
-                if (contentBlocks && Array.isArray(contentBlocks)) {
+                if (contentBlocks.length > 0) {
                   logger.log(
                     LOG_SOURCE,
                     `Processing renderCanvas function call.`
                   );
-                  onRenderCanvas(contentBlocks);
+                  onRenderCanvas(contentBlocks, currentSlideIndexRef.current);
                   sessionPromise.then((session) => {
                     session.sendToolResponse({
                       functionResponses: {
@@ -564,18 +620,24 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
                     });
                   });
                 } else {
-                  logger.error(
+                  logger.warn(
                     LOG_SOURCE,
-                    `Invalid 'contentBlocks' received in renderCanvas call`,
+                    `renderCanvas received empty/invalid content; rendering raw args as ascii`,
                     parsedArgs
                   );
+                  onRenderCanvas([
+                    {
+                      type: "ascii",
+                      content: JSON.stringify(parsedArgs, null, 2),
+                    },
+                  ]);
                   sessionPromise.then((session) => {
                     session.sendToolResponse({
                       functionResponses: {
                         id: fc.id,
                         name: fc.name,
                         response: {
-                          error: `Invalid arguments: 'contentBlocks' was missing or not an array.`,
+                          result: `Rendered fallback 'ascii' block from invalid args.`,
                         },
                       },
                     });

@@ -128,14 +128,19 @@ const LecturePage: React.FC<LecturePageProps> = ({
   );
 
   const handleRenderCanvas = useCallback(
-    (contentBlocks: CanvasBlock[]) => {
-      logger.log(LOG_SOURCE, "Received request to render canvas content.");
+    (contentBlocks: CanvasBlock[], targetSlideIndex?: number) => {
+      const indexToUpdate =
+        typeof targetSlideIndex === "number" ? targetSlideIndex : currentSlideIndex;
+      logger.log(
+        LOG_SOURCE,
+        `Received request to render canvas content for slide index ${indexToUpdate}.`
+      );
       setSlides((prevSlides) => {
         const newSlides = [...prevSlides];
-        const currentSlide = newSlides[currentSlideIndex];
-        if (currentSlide) {
-          newSlides[currentSlideIndex] = {
-            ...currentSlide,
+        const slideToUpdate = newSlides[indexToUpdate];
+        if (slideToUpdate) {
+          newSlides[indexToUpdate] = {
+            ...slideToUpdate,
             canvasContent: contentBlocks,
           };
         }
