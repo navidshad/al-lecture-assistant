@@ -23,6 +23,7 @@ interface IntroPageProps {
 
 const LANGUAGE_STORAGE_KEY = "ai-lecture-assistant-language";
 const VOICE_STORAGE_KEY = "ai-lecture-assistant-voice";
+const PROMPT_STORAGE_KEY = "ai-lecture-assistant-custom-prompt";
 
 const IntroPage: React.FC<IntroPageProps> = ({
   onLectureStart,
@@ -45,6 +46,11 @@ const IntroPage: React.FC<IntroPageProps> = ({
 
   const [selectedModel, setSelectedModel] = useState<ModelId>(MODELS[0].id);
 
+  const [userCustomPrompt, setUserCustomPrompt] = useLocalStorage<string>(
+    PROMPT_STORAGE_KEY,
+    ""
+  );
+
   // Ensure language remains valid if list updates
   useEffect(() => {
     if (!SUPPORTED_LANGUAGES.some((l) => l.title === selectedLanguage)) {
@@ -59,6 +65,7 @@ const IntroPage: React.FC<IntroPageProps> = ({
       selectedLanguage,
       selectedVoice,
       selectedModel,
+      userCustomPrompt,
     });
 
   const handleFileChange = useCallback(
@@ -164,6 +171,22 @@ const IntroPage: React.FC<IntroPageProps> = ({
             </select>
           </div>
         </div>
+      </div>
+
+      <div className="w-full max-w-2xl mb-8">
+        <label
+          htmlFor="custom-prompt"
+          className="block text-sm font-medium text-gray-400 mb-2 text-center"
+        >
+          Custom Lecture Instructions (optional)
+        </label>
+        <textarea
+          id="custom-prompt"
+          value={userCustomPrompt}
+          onChange={(e) => setUserCustomPrompt(e.target.value)}
+          placeholder="E.g., focus on real-world examples, emphasize definitions, avoid heavy math, target beginners..."
+          className="w-full rounded-lg border border-gray-600 bg-gray-700 px-4 py-3 text-white placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[96px] resize-y"
+        />
       </div>
 
       <div className="w-full max-w-2xl">

@@ -35,6 +35,7 @@ interface UseGeminiLiveProps {
   selectedLanguage: string;
   selectedVoice: string;
   selectedModel: string;
+  userCustomPrompt?: string;
   onSlideChange: (slideNumber: number) => void;
   onRenderCanvas: (contentBlocks: CanvasBlock[]) => void;
   apiKey: string | null;
@@ -100,6 +101,7 @@ export const useGeminiLive = ({
   selectedLanguage,
   selectedVoice,
   selectedModel,
+  userCustomPrompt,
   onSlideChange,
   onRenderCanvas,
   apiKey,
@@ -299,6 +301,10 @@ export const useGeminiLive = ({
         **General Information about the presentation:**
         ${generalInfo}
         
+        ${
+          userCustomPrompt ? `**User Preferences:**\n${userCustomPrompt}\n` : ``
+        }
+
         **Context:**
         You will be provided with a summary for each slide. You will also receive an image of the current slide when it becomes active. You may also receive text context about content on a 'canvas' for the current slide.
 
@@ -717,6 +723,7 @@ Resume the lecture from exactly where you left off on Slide ${currentSlideNumber
     selectedLanguage,
     selectedVoice,
     selectedModel,
+    userCustomPrompt,
     onSlideChange,
     onRenderCanvas,
     sendSlideImageContext,

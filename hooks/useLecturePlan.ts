@@ -10,6 +10,7 @@ interface UseLecturePlanOptions {
   selectedLanguage: string;
   selectedVoice: string;
   selectedModel: string;
+  userCustomPrompt: string;
 }
 
 interface UseLecturePlanResult {
@@ -37,6 +38,7 @@ export function useLecturePlan({
   selectedLanguage,
   selectedVoice,
   selectedModel,
+  userCustomPrompt,
 }: UseLecturePlanOptions): UseLecturePlanResult {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingText, setLoadingText] = useState("");
@@ -113,6 +115,7 @@ Slide 2:
           language: selectedLanguage,
           voice: selectedVoice,
           model: selectedModel,
+          prompt: userCustomPrompt,
         };
 
         const newSession: LectureSession = {
@@ -137,7 +140,7 @@ Slide 2:
         setLoadingText("");
       }
     },
-    [apiKey, selectedLanguage, selectedVoice, selectedModel]
+    [apiKey, selectedLanguage, selectedVoice, selectedModel, userCustomPrompt]
   );
 
   return { isLoading, loadingText, error, createSessionFromPdf };

@@ -166,6 +166,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
     selectedLanguage: session.lectureConfig.language,
     selectedVoice: session.lectureConfig.voice,
     selectedModel: session.lectureConfig.model,
+    userCustomPrompt: session.lectureConfig.prompt,
     onSlideChange: handleSlideChangeFromAI,
     onRenderCanvas: handleRenderCanvas,
     apiKey,

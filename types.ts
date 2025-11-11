@@ -13,6 +13,7 @@ export interface LectureConfig {
   language: string;
   voice: string;
   model: string;
+  prompt?: string;
 }
 
 export interface LectureSession {
