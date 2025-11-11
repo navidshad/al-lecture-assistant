@@ -172,6 +172,28 @@ export const useGeminiLive = ({
   const turnCounterRef = useRef(0);
   // Tunables
   const REANCHOR_EVERY_N_TURNS = 6; // set 0 to disable
+  // Helper: safely run logic with a live session without throwing on closed socket
+  const runWithOpenSession = useCallback((runner: (session: any) => void) => {
+    if (!sessionOpenRef.current || !sessionPromiseRef.current) {
+      return;
+    }
+    sessionPromiseRef.current
+      .then((session) => {
+        if (!sessionOpenRef.current) return;
+        try {
+          runner(session);
+        } catch (e) {
+          logger.warn(
+            LOG_SOURCE,
+            "Attempted to use session but underlying socket failed.",
+            e as any
+          );
+        }
+      })
+      .catch(() => {
+        // ignore
+      });
+  }, []);
 
   const setSessionState = (newState: LectureSessionState) => {
     _setSessionState((prevState) => {
@@ -259,7 +281,11 @@ export const useGeminiLive = ({
     // Treat as end of current AI message box
     aiMessageOpenRef.current = false;
     // Best-effort server-side interruption if supported (no-op otherwise)
-    if (ENABLE_SERVER_INTERRUPT && sessionOpenRef.current && sessionPromiseRef.current) {
+    if (
+      ENABLE_SERVER_INTERRUPT &&
+      sessionOpenRef.current &&
+      sessionPromiseRef.current
+    ) {
       sessionPromiseRef.current.then((session) => {
         try {
           session.sendRealtimeInput?.({ event: "response.cancel" });
@@ -280,16 +306,16 @@ export const useGeminiLive = ({
       );
       return;
     }
-    if (sessionPromiseRef.current) {
-      sessionPromiseRef.current.then((session) => {
-        session.sendRealtimeInput({ text });
-      });
-    } else {
+    if (!sessionPromiseRef.current) {
       logger.warn(
         LOG_SOURCE,
         "sendTextMessage called but session promise is null."
       );
+      return;
     }
+    runWithOpenSession((session) => {
+      session.sendRealtimeInput({ text });
+    });
   }, []);
 
   const sendSlideImageContext = useCallback((slide: Slide) => {
@@ -305,39 +331,39 @@ export const useGeminiLive = ({
       );
       return;
     }
-    if (sessionPromiseRef.current) {
-      sessionPromiseRef.current.then((session) => {
-        const base64Data = slide.imageDataUrl.split(",")[1];
-        if (!base64Data) {
-          logger.error(
-            LOG_SOURCE,
-            "Could not extract base64 data from slide image"
-          );
-          return;
-        }
-        const imageBlob: GenAI_Blob = {
-          data: base64Data,
-          mimeType: "image/png",
-        };
-        // Send image first
-        if (seq !== slideChangeSeqRef.current) return;
-        session.sendRealtimeInput({ media: imageBlob });
-
-        // If there's canvas content, send it as text context
-        if (slide.canvasContent && slide.canvasContent.length > 0) {
-          const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
-            slide.canvasContent
-          )}`;
-          if (seq !== slideChangeSeqRef.current) return;
-          session.sendRealtimeInput({ text: canvasText });
-        }
-      });
-    } else {
+    if (!sessionPromiseRef.current) {
       logger.warn(
         LOG_SOURCE,
         "sendSlideImageContext called but session promise is null."
       );
+      return;
     }
+    runWithOpenSession((session) => {
+      const base64Data = slide.imageDataUrl.split(",")[1];
+      if (!base64Data) {
+        logger.error(
+          LOG_SOURCE,
+          "Could not extract base64 data from slide image"
+        );
+        return;
+      }
+      const imageBlob: GenAI_Blob = {
+        data: base64Data,
+        mimeType: "image/png",
+      };
+      // Send image first
+      if (seq !== slideChangeSeqRef.current) return;
+      session.sendRealtimeInput({ media: imageBlob });
+
+      // If there's canvas content, send it as text context
+      if (slide.canvasContent && slide.canvasContent.length > 0) {
+        const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
+          slide.canvasContent
+        )}`;
+        if (seq !== slideChangeSeqRef.current) return;
+        session.sendRealtimeInput({ text: canvasText });
+      }
+    });
   }, []);
 
   const buildSlideMemory = useCallback(
@@ -557,7 +583,7 @@ export const useGeminiLive = ({
                 mimeType: "audio/pcm;rate=16000",
               };
 
-              sessionPromise.then((session) => {
+              runWithOpenSession((session) => {
                 session.sendRealtimeInput({ media: pcmBlob });
               });
             };
@@ -635,7 +661,7 @@ export const useGeminiLive = ({
                   flushOutput();
                   onSlideChange(slideNumber);
                   sendSlideImageContext(slides[slideNumber - 1]);
-                  sessionPromise.then((session) => {
+                  runWithOpenSession((session) => {
                     session.sendToolResponse({
                       functionResponses: {
                         id: fc.id,
@@ -653,7 +679,7 @@ export const useGeminiLive = ({
                     LOG_SOURCE,
                     `AI requested invalid slide number: ${slideNumber}`
                   );
-                  sessionPromise.then((session) => {
+                  runWithOpenSession((session) => {
                     session.sendToolResponse({
                       functionResponses: {
                         id: fc.id,
@@ -677,7 +703,7 @@ export const useGeminiLive = ({
                     );
                     const fallbackBlocks = normalizeCanvasBlocks(parsedArgs);
                     onRenderCanvas(fallbackBlocks);
-                    sessionPromise.then((session) => {
+                    runWithOpenSession((session) => {
                       session.sendToolResponse({
                         functionResponses: {
                           id: fc.id,
@@ -702,7 +728,7 @@ export const useGeminiLive = ({
                     `Processing renderCanvas function call.`
                   );
                   onRenderCanvas(contentBlocks, currentSlideIndexRef.current);
-                  sessionPromise.then((session) => {
+                  runWithOpenSession((session) => {
                     session.sendToolResponse({
                       functionResponses: {
                         id: fc.id,
@@ -725,7 +751,7 @@ export const useGeminiLive = ({
                       content: JSON.stringify(parsedArgs, null, 2),
                     },
                   ]);
-                  sessionPromise.then((session) => {
+                  runWithOpenSession((session) => {
                     session.sendToolResponse({
                       functionResponses: {
                         id: fc.id,
