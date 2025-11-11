@@ -62,6 +62,9 @@ const LecturePage: React.FC<LecturePageProps> = ({
     "ai-lecture-assistant-group-slides",
     false
   );
+  const [hoverPreviewIndex, setHoverPreviewIndex] = useState<number | null>(
+    null
+  );
 
   const { showToast } = useToast();
 
@@ -349,16 +352,19 @@ const LecturePage: React.FC<LecturePageProps> = ({
         window.clearTimeout(slideChangeTimerRef.current);
       }
       slideChangeTimerRef.current = window.setTimeout(() => {
+        const slide = slides[index];
+        if (!slide) return;
+        // Clear any hover preview when a slide is clicked
+        setHoverPreviewIndex(null);
         if (index !== currentSlideIndex) {
           setCurrentSlideIndex(index);
-          const slide = slides[index];
-          if (slide && requestExplanation) {
+          if (requestExplanation) {
             requestExplanation(slide);
           }
         }
       }, SLIDE_CHANGE_DEBOUNCE_MS);
     },
-    [currentSlideIndex, slides, requestExplanation]
+    [currentSlideIndex, slides, requestExplanation, setHoverPreviewIndex]
   );
 
   const handleSendMessage = useCallback(
@@ -453,7 +459,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
                 <div
                   className={`${
                     activeTab === "slide" ? "block" : "hidden"
-                  } w-full h-full`}
+                  } w-full h-full relative`}
                 >
                   <SlideViewer
                     slide={slides[currentSlideIndex]}
@@ -461,6 +467,17 @@ const LecturePage: React.FC<LecturePageProps> = ({
                     error={error}
                     onReconnect={handleReconnect}
                   />
+                  {hoverPreviewIndex != null &&
+                    hoverPreviewIndex !== currentSlideIndex &&
+                    slides[hoverPreviewIndex] && (
+                      <div className="hidden md:flex pointer-events-none absolute inset-0 z-20 items-center justify-center">
+                        <img
+                          src={slides[hoverPreviewIndex].imageDataUrl}
+                          alt={`Slide ${slides[hoverPreviewIndex].pageNumber} preview`}
+                          className="max-w-[85%] max-h-[85%] object-contain rounded-lg ring-2 ring-white/30 shadow-2xl"
+                        />
+                      </div>
+                    )}
                 </div>
                 <div
                   className={`${
@@ -562,6 +579,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
         className={`hidden md:flex flex-col bg-gray-800/50 border-l border-gray-700 transition-all duration-300 ease-in-out ${
           isSlidesVisible ? "w-48 md:w-64 p-2" : "w-0"
         }`}
+        onMouseLeave={() => setHoverPreviewIndex(null)}
       >
         {isSlidesVisible && (
           <>
@@ -579,12 +597,14 @@ const LecturePage: React.FC<LecturePageProps> = ({
                   groups={slideGroups}
                   currentIndex={currentSlideIndex}
                   onSelect={handleSelectSlide}
+                  onHover={setHoverPreviewIndex}
                 />
               ) : (
                 <SlidesThumbStrip
                   slides={slides}
                   currentIndex={currentSlideIndex}
                   onSelect={handleSelectSlide}
+                  onHover={setHoverPreviewIndex}
                 />
               )}
             </div>

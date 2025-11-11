@@ -7,6 +7,7 @@ interface GroupedSlidesThumbStripProps {
   groups: SlideGroup[];
   currentIndex: number;
   onSelect: (index: number) => void;
+  onHover?: (index: number | null) => void;
 }
 
 const GroupedSlidesThumbStrip: React.FC<GroupedSlidesThumbStripProps> = ({
@@ -14,6 +15,7 @@ const GroupedSlidesThumbStrip: React.FC<GroupedSlidesThumbStripProps> = ({
   groups,
   currentIndex,
   onSelect,
+  onHover,
 }) => {
   return (
     <div className="space-y-3">
@@ -37,6 +39,9 @@ const GroupedSlidesThumbStrip: React.FC<GroupedSlidesThumbStripProps> = ({
                         slides={[slide]}
                         currentIndex={currentIndex === absoluteIndex ? 0 : -1}
                         onSelect={() => onSelect(absoluteIndex)}
+                        onHover={(local) =>
+                          onHover?.(local != null ? absoluteIndex : null)
+                        }
                         itemClassName="w-full"
                         imageClassName="w-full h-auto"
                       />

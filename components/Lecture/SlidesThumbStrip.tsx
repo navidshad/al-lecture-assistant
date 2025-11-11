@@ -8,6 +8,7 @@ interface SlidesThumbStripProps {
   onSelect: (index: number) => void;
   itemClassName?: string;
   imageClassName?: string;
+  onHover?: (index: number | null) => void;
 }
 
 const SlidesThumbStrip: React.FC<SlidesThumbStripProps> = ({
@@ -16,15 +17,20 @@ const SlidesThumbStrip: React.FC<SlidesThumbStripProps> = ({
   onSelect,
   itemClassName,
   imageClassName,
+  onHover,
 }) => {
   return (
     <>
       {slides.map((slide, index) => (
         <div
           key={slide.pageNumber}
-          onClick={() => onSelect(index)}
-          className={`cursor-pointer border-2 transition-all rounded-md overflow-hidden relative ${
-            index === currentIndex ? 'border-blue-500 shadow-lg' : 'border-transparent hover:border-gray-500'
+          onClick={index === currentIndex ? undefined : () => onSelect(index)}
+          onMouseEnter={() => onHover && onHover(index === currentIndex ? null : index)}
+          onMouseLeave={() => onHover && onHover(null)}
+          className={`${index === currentIndex ? 'cursor-default' : 'cursor-pointer'} border-2 transition-all rounded-md overflow-hidden relative ${
+            index === currentIndex
+              ? 'border-blue-500 ring-2 ring-blue-400/60 shadow-xl shadow-blue-500/30 bg-blue-500/5'
+              : 'border-transparent hover:border-gray-500'
           } ${itemClassName || ''}`}
         >
           <img
