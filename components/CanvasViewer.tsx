@@ -1,8 +1,7 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { CanvasBlock } from "../types";
 
-// Let TypeScript know that 'mermaid' is available on the window object
-declare const mermaid: any;
+// Markdown-only canvas
 
 const parseMarkdown = (text: string): string => {
   if (!text) return "";
@@ -132,67 +131,7 @@ const parseTable = (markdown: string): string => {
   return `<div class="w-full overflow-x-auto rounded-lg border border-gray-700"><table class="min-w-full divide-y divide-gray-700">${thead}${tbody}</table></div>`;
 };
 
-const prepareDiagramContent = (content: string): string => {
-  const trimmedContent = content.trim();
-  const diagramTypes = [
-    "graph",
-    "flowchart",
-    "sequenceDiagram",
-    "classDiagram",
-    "stateDiagram-v2",
-    "stateDiagram",
-    "erDiagram",
-    "journey",
-    "gantt",
-    "pie",
-    "quadrantChart",
-    "requirementDiagram",
-    "gitGraph",
-    "mindmap",
-    "timeline",
-    "C4Context",
-  ];
-
-  const startsWithDiagramType = diagramTypes.some((type) =>
-    trimmedContent.startsWith(type)
-  );
-
-  if (startsWithDiagramType) {
-    return trimmedContent;
-  }
-
-  // If no diagram type is specified, default to flowchart (graph TD)
-  return `graph TD\n${trimmedContent}`;
-};
-
-const CanvasViewer: React.FC<{
-  content: CanvasBlock[];
-  isFixing?: boolean;
-  onRenderError?: (args: { blocks: CanvasBlock[]; error: unknown }) => void;
-}> = ({ content, isFixing, onRenderError }) => {
-  useEffect(() => {
-    if (typeof mermaid === "undefined") return;
-
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: "dark",
-      fontFamily: '"Inter", sans-serif',
-      securityLevel: "loose",
-    });
-
-    if (content && content.some((block) => block.type === "diagram")) {
-      try {
-        mermaid.run({
-          nodes: document.querySelectorAll(".mermaid-diagram-render"),
-        });
-      } catch (e) {
-        console.error("Mermaid.js rendering error:", e);
-        if (onRenderError) {
-          onRenderError({ blocks: content, error: e });
-        }
-      }
-    }
-  }, [content]);
+const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
 
   if (!content || content.length === 0) {
     return (
@@ -210,88 +149,15 @@ const CanvasViewer: React.FC<{
 
   return (
     <div className="relative w-full h-full bg-black rounded-lg shadow-2xl flex flex-col items-start justify-start overflow-auto border border-gray-700 p-6 space-y-4">
-      {isFixing && (
-        <div className="pointer-events-none absolute inset-0 bg-black/40 flex items-center justify-center rounded-lg">
-          <div className="flex items-center gap-3 text-gray-200 bg-gray-800/80 px-4 py-2 rounded-md border border-gray-700">
-            <svg
-              className="animate-spin h-4 w-4 text-blue-400"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              ></circle>
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-              ></path>
-            </svg>
-            <span>Fixing…</span>
-          </div>
-        </div>
-      )}
-      {content.map((block, index) => {
-        switch (block.type) {
-          case "markdown":
-            return (
-              <div
-                key={index}
-                className="text-left text-gray-200 w-full"
-                dangerouslySetInnerHTML={{
-                  __html: parseMarkdown(block.content),
-                }}
-              />
-            );
-          case "diagram":
-            return (
-              <div
-                key={index}
-                className="mermaid-diagram-render w-full flex justify-center bg-gray-800 rounded-lg p-4"
-              >
-                {prepareDiagramContent(block.content)}
-              </div>
-            );
-          case "ascii":
-            return (
-              <pre
-                key={index}
-                className="bg-gray-900 p-4 rounded-md overflow-x-auto text-sm w-full"
-              >
-                <code className="font-mono text-white whitespace-pre">
-                  {block.content}
-                </code>
-              </pre>
-            );
-          case "table":
-            return (
-              <div
-                key={index}
-                className="text-left text-gray-200 w-full"
-                dangerouslySetInnerHTML={{ __html: parseTable(block.content) }}
-              />
-            );
-          default:
-            return (
-              <pre
-                key={index}
-                className="bg-gray-900 p-4 rounded-md overflow-x-auto text-sm w-full"
-              >
-                <code className="font-mono text-white whitespace-pre">
-                  {typeof (block as any)?.content === "string"
-                    ? (block as any).content
-                    : JSON.stringify(block, null, 2)}
-                </code>
-              </pre>
-            );
-        }
-      })}
+      {content.map((block, index) => (
+        <div
+          key={index}
+          className="text-left text-gray-200 w-full"
+          dangerouslySetInnerHTML={{
+            __html: parseMarkdown(block.content),
+          }}
+        />
+      ))}
     </div>
   );
 };

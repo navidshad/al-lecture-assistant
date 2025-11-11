@@ -53,7 +53,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
   const [isSlidesVisible, setIsSlidesVisible] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"slide" | "canvas">("slide");
-  const [isCanvasFixing, setIsCanvasFixing] = useState(false);
+  const lastFixSignatureRef = useRef<string | null>(null);
   const [slideGroups, setSlideGroups] = useState<SlideGroup[] | null>(
     session.slideGroups ?? null
   );
@@ -103,6 +103,25 @@ const LecturePage: React.FC<LecturePageProps> = ({
     return () => window.removeEventListener("resize", checkDesktop);
   }, [session.id]);
 
+  // Proxy for onRenderCanvas to avoid TDZ/hoisting issues and always call latest handler
+  const onRenderCanvasRef = useRef<
+    | ((contentBlocks: CanvasBlock[], targetSlideIndex?: number) => void)
+    | undefined
+  >(undefined);
+  const handleRenderCanvasProxy = useCallback(
+    (contentBlocks: CanvasBlock[], targetSlideIndex?: number) => {
+      if (onRenderCanvasRef.current) {
+        onRenderCanvasRef.current(contentBlocks, targetSlideIndex);
+      } else {
+        logger.warn(
+          LOG_SOURCE,
+          "onRenderCanvas handler not ready yet; dropping this canvas update."
+        );
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     let cancelled = false;
     const maybeGroupSlides = async () => {
@@ -145,7 +164,14 @@ const LecturePage: React.FC<LecturePageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isGroupingEnabled, slides, apiKey, session.lectureConfig.model, session.slideGroups, slideGroups]);
+  }, [
+    isGroupingEnabled,
+    slides,
+    apiKey,
+    session.lectureConfig.model,
+    session.slideGroups,
+    slideGroups,
+  ]);
 
   const handleTranscriptToggle = useCallback(() => {
     if (window.innerWidth < 768) {
@@ -185,32 +211,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
     [slides.length]
   );
 
-  const handleRenderCanvas = useCallback(
-    (contentBlocks: CanvasBlock[], targetSlideIndex?: number) => {
-      const indexToUpdate =
-        typeof targetSlideIndex === "number"
-          ? targetSlideIndex
-          : currentSlideIndex;
-      logger.log(
-        LOG_SOURCE,
-        `Received request to render canvas content for slide index ${indexToUpdate}.`
-      );
-      setSlides((prevSlides) => {
-        const newSlides = [...prevSlides];
-        const slideToUpdate = newSlides[indexToUpdate];
-        if (slideToUpdate) {
-          newSlides[indexToUpdate] = {
-            ...slideToUpdate,
-            canvasContent: contentBlocks,
-          };
-        }
-        return newSlides;
-      });
-      setActiveTab("canvas");
-      setIsCanvasFixing(false);
-    },
-    [currentSlideIndex]
-  );
+  // handleRenderCanvas is defined after useGeminiLive, see below.
 
   const {
     sessionState,
@@ -234,11 +235,37 @@ const LecturePage: React.FC<LecturePageProps> = ({
     selectedModel: session.lectureConfig.model,
     userCustomPrompt: session.lectureConfig.prompt,
     onSlideChange: handleSlideChangeFromAI,
-    onRenderCanvas: handleRenderCanvas,
+    onRenderCanvas: handleRenderCanvasProxy,
     apiKey,
     currentSlideIndex,
   });
 
+  const handleRenderCanvas = useCallback(
+    (contentBlocks: CanvasBlock[], targetSlideIndex?: number) => {
+      const indexToUpdate =
+        typeof targetSlideIndex === "number"
+          ? targetSlideIndex
+          : currentSlideIndex;
+      logger.log(
+        LOG_SOURCE,
+        `Received request to render canvas content for slide index ${indexToUpdate}.`
+      );
+      setSlides((prevSlides) => {
+        const newSlides = [...prevSlides];
+        const slideToUpdate = newSlides[indexToUpdate];
+        if (slideToUpdate) {
+          newSlides[indexToUpdate] = {
+            ...slideToUpdate,
+            canvasContent: contentBlocks,
+          };
+        }
+        return newSlides;
+      });
+      setActiveTab("canvas");
+      // Markdown-only: no additional validation or fixing here.
+    },
+    [currentSlideIndex]
+  );
   // If the connection dropped and the user unmutes, auto-reconnect
   useEffect(() => {
     if (!isMuted && sessionState === LectureSessionState.DISCONNECTED) {
@@ -249,62 +276,12 @@ const LecturePage: React.FC<LecturePageProps> = ({
       startLecture();
     }
   }, [isMuted, sessionState, startLecture]);
-  const handleCanvasRenderError = useCallback(
-    (args: { blocks: CanvasBlock[]; error: unknown }) => {
-      logger.warn(
-        LOG_SOURCE,
-        "Canvas rendering error detected. Initiating auto-fix.",
-        args.error
-      );
-      setIsCanvasFixing(true);
+  // Removed: auto-fix error flow. Canvas is markdown-only now.
 
-      const rawPayload = JSON.stringify(
-        {
-          slideNumber: currentSlideIndex + 1,
-          receivedBlocks: args.blocks,
-          error: String(
-            (args.error as any)?.message || args.error || "unknown"
-          ),
-        },
-        null,
-        2
-      );
-
-      if (typeof requestExplanation === "function") {
-        const instruction =
-          `The canvas content failed to render on slide ${
-            currentSlideIndex + 1
-          }.\n` +
-          `Here is the raw payload and error:\n\n` +
-          "```json\n" +
-          rawPayload +
-          "\n```\n\n" +
-          "Please fix the content and call the tool 'renderCanvas' with a valid 'contentBlocks' array using only these types: 'markdown', 'diagram', 'ascii', 'table'.\n" +
-          "If you use 'diagram', ensure it is valid Mermaid syntax (e.g., starts with 'graph', 'sequenceDiagram', etc.).\n" +
-          "Do not include commentary in the canvas; only call the tool.";
-
-        const slide = slides[currentSlideIndex];
-        if (slide) {
-          requestExplanation(slide);
-        }
-        if (typeof sendTextMessage === "function") {
-          sendTextMessage(instruction);
-        }
-      } else if (typeof sendTextMessage === "function") {
-        const instruction =
-          `The canvas content failed to render on slide ${
-            currentSlideIndex + 1
-          }.\n` +
-          `Raw payload and error:\n\n` +
-          "```json\n" +
-          rawPayload +
-          "\n```\n\n" +
-          "Fix and call tool 'renderCanvas' with a valid 'contentBlocks' array. Only use types: 'markdown', 'diagram', 'ascii', 'table'.";
-        sendTextMessage(instruction);
-      }
-    },
-    [currentSlideIndex, slides, requestExplanation, sendTextMessage]
-  );
+  // Keep proxy pointing to latest handler
+  useEffect(() => {
+    onRenderCanvasRef.current = handleRenderCanvas;
+  }, [handleRenderCanvas]);
 
   useEffect(() => {
     if (error) {
@@ -490,11 +467,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
                     activeTab === "canvas" ? "block" : "hidden"
                   } w-full h-full`}
                 >
-                  <CanvasViewer
-                    content={currentCanvasContent}
-                    isFixing={isCanvasFixing}
-                    onRenderError={handleCanvasRenderError}
-                  />
+                  <CanvasViewer content={currentCanvasContent} />
                 </div>
               </div>
             </div>

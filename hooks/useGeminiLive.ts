@@ -27,32 +27,20 @@ import { logger } from "../services/logger";
 const LOG_SOURCE = "useGeminiLive";
 
 const normalizeCanvasBlocks = (input: any): CanvasBlock[] => {
-  const supported = new Set(["markdown", "diagram", "ascii", "table"]);
-
-  const coerceItem = (item: any): CanvasBlock | null => {
+  // Markdown-only normalization
+  const coerceToMarkdown = (item: any): CanvasBlock | null => {
     if (item == null) return null;
-
     if (typeof item === "string") {
-      return { type: "ascii", content: item };
+      return { type: "markdown", content: item };
     }
-
     if (typeof item === "object") {
-      const content =
+      const possibleContent =
         typeof item.content === "string"
           ? item.content
           : JSON.stringify(item, null, 2);
-
-      let type = typeof item.type === "string" ? item.type.toLowerCase() : "";
-
-      if (!supported.has(type)) {
-        const looksMarkdown = /[#*_`]|^\s*-\s+|\|\s*.+\s*\|/.test(content);
-        type = looksMarkdown ? "markdown" : "ascii";
-      }
-
-      return { type: type as CanvasBlock["type"], content };
+      return { type: "markdown", content: possibleContent };
     }
-
-    return { type: "ascii", content: String(item) };
+    return { type: "markdown", content: String(item) };
   };
 
   if (
@@ -60,17 +48,17 @@ const normalizeCanvasBlocks = (input: any): CanvasBlock[] => {
     !Array.isArray(input) &&
     (typeof input === "object" || typeof input === "string")
   ) {
-    const coerced = coerceItem(input);
+    const coerced = coerceToMarkdown(input);
     return coerced ? [coerced] : [];
   }
 
   if (Array.isArray(input)) {
-    return (input.map(coerceItem).filter(Boolean) as CanvasBlock[]) || [];
+    return (input.map(coerceToMarkdown).filter(Boolean) as CanvasBlock[]) || [];
   }
 
   return [
     {
-      type: "ascii",
+      type: "markdown",
       content:
         typeof input === "string" ? input : JSON.stringify(input, null, 2),
     },
@@ -116,26 +104,24 @@ const setActiveSlideFunctionDeclaration: FunctionDeclaration = {
 const renderCanvasFunctionDeclaration: FunctionDeclaration = {
   name: "renderCanvas",
   description:
-    "Renders a structured list of content blocks on a canvas area to provide visual clarification or extra information. Use this to draw diagrams, show code, write formulas, or create text-based illustrations.",
+    "Render additional information on the canvas as pure Markdown blocks only. Do not use any third‑party extensions or embedded syntaxes (e.g., Mermaid diagrams, KaTeX/LaTeX math, HTML/SVG, images, or tables). Provide only plain Markdown text in 'content'.",
   parameters: {
     type: Type.OBJECT,
     properties: {
       contentBlocks: {
         type: Type.ARRAY,
         description:
-          "An array of content blocks to render sequentially on the canvas.",
+          "An array of markdown blocks to render sequentially on the canvas.",
         items: {
           type: Type.OBJECT,
           properties: {
             type: {
               type: Type.STRING,
-              description:
-                "The type of content. Supported values: 'markdown', 'diagram', 'ascii', 'table'.",
+              description: "Must be 'markdown'.",
             },
             content: {
               type: Type.STRING,
-              description:
-                "The content for the block. For 'markdown', this is a Markdown string. For 'diagram', this is a Mermaid.js syntax string. For 'ascii', this is a text-based illustration. For 'table', it is a Markdown-formatted table string.",
+              description: "The markdown string for the block.",
             },
           },
           required: ["type", "content"],
