@@ -25,6 +25,7 @@ const LANGUAGE_STORAGE_KEY = "ai-lecture-assistant-language";
 const VOICE_STORAGE_KEY = "ai-lecture-assistant-voice";
 const PROMPT_STORAGE_KEY = "ai-lecture-assistant-custom-prompt";
 const GROUP_SLIDES_STORAGE_KEY = "ai-lecture-assistant-group-slides";
+const MARK_IMPORTANT_STORAGE_KEY = "ai-lecture-assistant-mark-important";
 
 const IntroPage: React.FC<IntroPageProps> = ({
   onLectureStart,
@@ -57,6 +58,11 @@ const IntroPage: React.FC<IntroPageProps> = ({
     false
   );
 
+  const [markImportantSlides, setMarkImportantSlides] = useLocalStorage<boolean>(
+    MARK_IMPORTANT_STORAGE_KEY,
+    false
+  );
+
   // Ensure language remains valid if list updates
   useEffect(() => {
     if (!SUPPORTED_LANGUAGES.some((l) => l.title === selectedLanguage)) {
@@ -72,6 +78,7 @@ const IntroPage: React.FC<IntroPageProps> = ({
       selectedVoice,
       selectedModel,
       userCustomPrompt,
+      markImportantSlides,
     });
 
   const handleFileChange = useCallback(
@@ -204,6 +211,18 @@ const IntroPage: React.FC<IntroPageProps> = ({
             className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
           />
           <span className="text-sm text-gray-300">Group slides by AI (UI only)</span>
+        </label>
+      </div>
+
+      <div className="w-full max-w-2xl mb-4">
+        <label className="inline-flex items-center space-x-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={markImportantSlides}
+            onChange={(e) => setMarkImportantSlides(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+          />
+          <span className="text-sm text-gray-300">Mark important slides by AI (UI only)</span>
         </label>
       </div>
 

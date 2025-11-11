@@ -1,5 +1,6 @@
 import React from "react";
 import { Slide } from "../../types";
+import { Star } from "lucide-react";
 
 interface SlidesThumbStripProps {
   slides: Slide[];
@@ -36,6 +37,13 @@ const SlidesThumbStrip: React.FC<SlidesThumbStripProps> = ({
               {slide.pageNumber}
             </span>
           </div>
+          {slide.isImportant && (
+            <div className="absolute top-1 right-1">
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-yellow-500/90 text-gray-900">
+                <Star className="w-3 h-3" />
+              </span>
+            </div>
+          )}
         </div>
       ))}
     </>

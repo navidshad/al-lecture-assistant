@@ -11,6 +11,7 @@ interface UseLecturePlanOptions {
   selectedVoice: string;
   selectedModel: string;
   userCustomPrompt: string;
+  markImportantSlides?: boolean;
 }
 
 interface UseLecturePlanResult {
@@ -39,6 +40,7 @@ export function useLecturePlan({
   selectedVoice,
   selectedModel,
   userCustomPrompt,
+  markImportantSlides = false,
 }: UseLecturePlanOptions): UseLecturePlanResult {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingText, setLoadingText] = useState("");
@@ -67,6 +69,11 @@ export function useLecturePlan({
 
 - general info: A brief overview of the entire presentation in 1–2 sentences, MAX 200 characters total.
 - Slide N: The main message of slide N in exactly 1 short sentence, MAX 90 characters. Repeat for all slides.
+${
+  markImportantSlides
+    ? `- If a slide is crucial to learning the lecture (mandatory for understanding and likely exam relevance), mark the header with an asterisk after the number: "Slide N *:"`
+    : ``
+}
 
 STRICT REQUIREMENTS:
 - Use exactly these labels: "general info:" and "Slide N:" (e.g., Slide 1:, Slide 2:)
@@ -74,6 +81,11 @@ STRICT REQUIREMENTS:
 - Do not exceed the character caps; if needed, abbreviate but keep meaning
 - Do not include information not visible in the slides
 - Do NOT use filler/openers such as: "in this slide", "this slide shows", "on slide N", "we will", "let’s", "here we", "the following"; write the main message directly.
+${
+  markImportantSlides
+    ? `- IMPORTANT: If a slide is important (i.e., mandatory to review to learn the lecture and likely important for the exam), put exactly one asterisk (*) after the slide number in the header (e.g., "Slide 2 *:"). Otherwise keep "Slide N:" with no asterisk.`
+    : ``
+}
 
 Format:
 
@@ -97,10 +109,11 @@ Slide 2:
         )({
           model: "gemini-2.5-pro",
           contents: { parts: [textPart, pdfPart] },
+          generationConfig: { temperature: 0 },
         });
 
         const lecturePlanText: string = response.text;
-        const { generalInfo, slideSummaries } =
+        const { generalInfo, slideSummaries, importantSlides } =
           parseLecturePlanResponse(lecturePlanText);
 
         const enhancedSlides: Slide[] = parsedSlides.map((parsedSlide) => {
@@ -108,6 +121,7 @@ Slide 2:
           return {
             ...parsedSlide,
             summary: summary ?? "No summary was generated for this slide.",
+            isImportant: importantSlides?.has(parsedSlide.pageNumber) ?? false,
           };
         });
 
@@ -140,7 +154,14 @@ Slide 2:
         setLoadingText("");
       }
     },
-    [apiKey, selectedLanguage, selectedVoice, selectedModel, userCustomPrompt]
+    [
+      apiKey,
+      selectedLanguage,
+      selectedVoice,
+      selectedModel,
+      userCustomPrompt,
+      markImportantSlides,
+    ]
   );
 
   return { isLoading, loadingText, error, createSessionFromPdf };

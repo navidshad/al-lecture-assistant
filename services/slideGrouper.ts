@@ -69,6 +69,7 @@ export async function groupSlidesByAI(params: {
     )({
       model: modelToUse,
       contents: { parts: [textPart] },
+      generationConfig: { temperature: 0 },
     });
 
     let groups: SlideGroup[] = [];
