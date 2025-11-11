@@ -92,5 +92,16 @@ export const sessionManager = {
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
     });
+  },
+  
+  async clearAllSessions(): Promise<void> {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      store.clear();
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
   }
 };
