@@ -688,6 +688,9 @@ export const useGeminiLive = ({
             if (isReconnect) {
               logger.log(LOG_SOURCE, "Reconnecting. Greeting-only resume.");
               const currentSlideNumber = currentSlideIndex + 1;
+              // Provide the active slide image/canvas so the model has full context,
+              // but do not prompt it to explain yet.
+              sendSlideImageContext(slides[currentSlideIndex]);
               const instruction = `INSTRUCTION: You are resuming an existing lecture. ONLY say: "We are on slide ${currentSlideNumber}, ready to continue!" Do not explain any content. Wait for the user to proceed.`;
               sendTextMessage(instruction);
               runWithOpenSession((session) => {
