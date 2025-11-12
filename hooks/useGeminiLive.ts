@@ -297,74 +297,87 @@ export const useGeminiLive = ({
     }
   }, []);
 
-  const sendTextMessage = useCallback((text: string) => {
-    logger.debug(LOG_SOURCE, "sendTextMessage called.");
-    if (!sessionOpenRef.current) {
-      logger.warn(
-        LOG_SOURCE,
-        "Attempted to send text but session is not open. Ignoring."
-      );
-      return;
-    }
-    if (!sessionPromiseRef.current) {
-      logger.warn(
-        LOG_SOURCE,
-        "sendTextMessage called but session promise is null."
-      );
-      return;
-    }
-    runWithOpenSession((session) => {
-      session.sendRealtimeInput({ text });
-    });
-  }, []);
+  type SendMessageOptions = {
+    slide?: Slide;
+    text?: string | string[];
+    turnComplete?: boolean;
+  };
 
-  const sendSlideImageContext = useCallback((slide: Slide) => {
-    logger.debug(
-      LOG_SOURCE,
-      `sendSlideImageContext called for slide ${slide.pageNumber}`
-    );
-    const seq = ++slideChangeSeqRef.current;
+  const sendMessage = useCallback((options: SendMessageOptions) => {
+    logger.debug(LOG_SOURCE, "sendMessage called.");
     if (!sessionOpenRef.current) {
       logger.warn(
         LOG_SOURCE,
-        "Attempted to send slide image but session is not open. Ignoring."
+        "Attempted to send but session is not open. Ignoring."
       );
       return;
     }
-    if (!sessionPromiseRef.current) {
-      logger.warn(
-        LOG_SOURCE,
-        "sendSlideImageContext called but session promise is null."
-      );
-      return;
-    }
-    runWithOpenSession((session) => {
+    const { slide, text } = options;
+    const turnComplete = options.turnComplete ?? true;
+    const parts: any[] = [];
+    if (slide) {
       const base64Data = slide.imageDataUrl.split(",")[1];
-      if (!base64Data) {
-        logger.error(
-          LOG_SOURCE,
-          "Could not extract base64 data from slide image"
-        );
-        return;
+      if (base64Data) {
+        parts.push({
+          inlineData: { mimeType: "image/png", data: base64Data },
+        });
       }
-      const imageBlob: GenAI_Blob = {
-        data: base64Data,
-        mimeType: "image/png",
-      };
-      // Send image first
-      if (seq !== slideChangeSeqRef.current) return;
-      session.sendRealtimeInput({ media: imageBlob });
-
-      // If there's canvas content, send it as text context
       if (slide.canvasContent && slide.canvasContent.length > 0) {
-        const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
-          slide.canvasContent
-        )}`;
-        if (seq !== slideChangeSeqRef.current) return;
-        session.sendRealtimeInput({ text: canvasText });
+        parts.push({
+          text: `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
+            slide.canvasContent
+          )}`,
+        });
+      }
+    }
+    if (typeof text === "string") {
+      parts.push({ text });
+    } else if (Array.isArray(text)) {
+      for (const t of text) {
+        parts.push({ text: t });
+      }
+    }
+    if (parts.length === 0) {
+      logger.warn(
+        LOG_SOURCE,
+        "sendMessage called with no parts to send. Ignoring."
+      );
+      return;
+    }
+    runWithOpenSession((session) => {
+      try {
+        session.sendClientContent?.({
+          turns: [{ role: "user", parts }],
+          turnComplete,
+        });
+      } catch (e) {
+        logger.warn(
+          LOG_SOURCE,
+          "sendClientContent failed in sendMessage; falling back to realtime inputs.",
+          e as any
+        );
+        try {
+          for (const p of parts) {
+            if (p.inlineData) {
+              session.sendRealtimeInput({
+                media: {
+                  data: p.inlineData.data,
+                  mimeType: p.inlineData.mimeType,
+                },
+              });
+            } else if (typeof p.text === "string") {
+              session.sendRealtimeInput({ text: p.text });
+            }
+          }
+          if (turnComplete) {
+            session.sendRealtimeInput?.({ event: "end_of_turn" });
+          }
+        } catch {}
       }
     });
   }, []);
+
+  // (removed) sendSlideImageContext – unified into sendMessage
 
   const buildSlideMemory = useCallback(
     (
@@ -404,53 +417,20 @@ export const useGeminiLive = ({
       ]
         .filter(Boolean)
         .join("\n");
-      sendTextMessage(anchor);
+      sendMessage({ text: anchor, turnComplete: false });
     },
-    [buildSlideMemory, sendTextMessage]
+    [buildSlideMemory, sendMessage]
   );
 
-  const sendSlideContextTurn = useCallback(
+  const buildSlideAnchorText = useCallback(
     (slide: Slide, transcriptNow: TranscriptEntry[]) => {
-      logger.debug(
-        LOG_SOURCE,
-        `sendSlideContextTurn called for slide ${slide.pageNumber}`
-      );
-      const seq = ++slideChangeSeqRef.current;
-      if (!sessionOpenRef.current) {
-        logger.warn(
-          LOG_SOURCE,
-          "Attempted to send slide context but session is not open. Ignoring."
-        );
-        return;
-      }
-      if (!sessionPromiseRef.current) {
-        logger.warn(
-          LOG_SOURCE,
-          "sendSlideContextTurn called but session promise is null."
-        );
-        return;
-      }
-
-      const base64Data = slide.imageDataUrl.split(",")[1];
-      if (!base64Data) {
-        logger.error(
-          LOG_SOURCE,
-          "Could not extract base64 data from slide image"
-        );
-        return;
-      }
-      const imageBlob: GenAI_Blob = {
-        data: base64Data,
-        mimeType: "image/png",
-      };
-
       const keyTurns = buildSlideMemory(
         transcriptNow,
         slide.pageNumber,
         12,
         1800
       );
-      const anchor = [
+      return [
         `ACTIVE SLIDE: ${slide.pageNumber}`,
         slide.summary ? `SUMMARY: ${slide.summary}` : null,
         slide.textContent
@@ -461,32 +441,12 @@ export const useGeminiLive = ({
       ]
         .filter(Boolean)
         .join("\n");
-
-      runWithOpenSession((session) => {
-        // Image first
-        if (seq !== slideChangeSeqRef.current) return;
-        session.sendRealtimeInput({ media: imageBlob });
-
-        // Canvas context second (optional)
-        if (slide.canvasContent && slide.canvasContent.length > 0) {
-          const canvasText = `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
-            slide.canvasContent
-          )}`;
-          if (seq !== slideChangeSeqRef.current) return;
-          session.sendRealtimeInput({ text: canvasText });
-        }
-
-        // Anchor last
-        if (seq !== slideChangeSeqRef.current) return;
-        session.sendRealtimeInput({ text: anchor });
-
-        // End of turn to produce one coherent response
-        if (seq !== slideChangeSeqRef.current) return;
-        session.sendRealtimeInput({ event: "end_of_turn" });
-      });
     },
-    [buildSlideMemory, runWithOpenSession]
+    [buildSlideMemory]
   );
+
+  // Sends image + optional canvas context + text instruction as ONE coherent turn.
+  // (removed) sendCombinedImageAndTextTurn – unified into sendMessage
 
   const requestExplanation = useCallback(
     (slide: Slide) => {
@@ -496,9 +456,10 @@ export const useGeminiLive = ({
       );
       // Stop any ongoing output before changing context
       flushOutput();
-      sendSlideContextTurn(slide, transcript);
+      const anchor = buildSlideAnchorText(slide, transcript);
+      sendMessage({ slide, text: anchor, turnComplete: true });
     },
-    [flushOutput, sendSlideContextTurn, transcript]
+    [flushOutput, buildSlideAnchorText, sendMessage, transcript]
   );
 
   const startLecture = useCallback(() => {
@@ -688,37 +649,77 @@ export const useGeminiLive = ({
             if (isReconnect) {
               logger.log(LOG_SOURCE, "Reconnecting. Greeting-only resume.");
               const currentSlideNumber = currentSlideIndex + 1;
-              // Provide the active slide image/canvas so the model has full context,
-              // but do not prompt it to explain yet.
-              sendSlideImageContext(slides[currentSlideIndex]);
               const instruction = `INSTRUCTION: You are resuming an existing lecture. ONLY say: "We are on slide ${currentSlideNumber}, ready to continue!" Do not explain any content. Wait for the user to proceed.`;
-              sendTextMessage(instruction);
-              runWithOpenSession((session) => {
-                try {
-                  session.sendRealtimeInput?.({ event: "end_of_turn" });
-                } catch {}
+              // Single-turn send: image + canvas (if any) + instruction
+              sendMessage({
+                slide: slides[currentSlideIndex],
+                text: instruction,
+                turnComplete: true,
               });
             } else {
-              // For a new lecture, send context and instructions separately for clarity.
-              sendSlideImageContext(slides[0]);
-
-              // First, send the lecture plan as context.
-              const contextMessage = `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`;
-              sendTextMessage(contextMessage);
-
-              // Then, send a clear instruction to begin.
-              const instructionMessage = `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`;
-              sendTextMessage(instructionMessage);
-              logger.debug(
-                LOG_SOURCE,
-                "Sent initial context and instruction to AI for a new lecture."
-              );
-              // Ensure the model starts one coherent response for the initial inputs
-              runWithOpenSession((session) => {
-                try {
-                  session.sendRealtimeInput?.({ event: "end_of_turn" });
-                } catch {}
-              });
+              // For a new lecture, send the initial image + plan + instruction as a single turn
+              const firstSlide = slides[0];
+              const base64Data = firstSlide.imageDataUrl.split(",")[1];
+              if (base64Data) {
+                const parts: any[] = [
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: base64Data,
+                    },
+                  },
+                  {
+                    text: `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
+                  },
+                  {
+                    text: `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
+                  },
+                ];
+                runWithOpenSession((session) => {
+                  try {
+                    session.sendClientContent?.({
+                      turns: [{ role: "user", parts }],
+                      turnComplete: true,
+                    });
+                    logger.debug(
+                      LOG_SOURCE,
+                      "Sent initial context and instruction as a single turn for a new lecture."
+                    );
+                  } catch (e) {
+                    logger.warn(
+                      LOG_SOURCE,
+                      "sendClientContent failed for initial lecture; falling back to separate realtime inputs.",
+                      e as any
+                    );
+                    try {
+                      session.sendRealtimeInput({
+                        media: { data: base64Data, mimeType: "image/png" },
+                      });
+                      session.sendRealtimeInput({
+                        text: `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
+                      });
+                      session.sendRealtimeInput({
+                        text: `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
+                      });
+                      session.sendRealtimeInput?.({ event: "end_of_turn" });
+                    } catch {}
+                  }
+                });
+              } else {
+                // Fallback if image is missing (should not happen)
+                sendMessage({
+                  text: [
+                    `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
+                    `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
+                  ],
+                  turnComplete: true,
+                });
+                runWithOpenSession((session) => {
+                  try {
+                    session.sendRealtimeInput?.({ event: "end_of_turn" });
+                  } catch {}
+                });
+              }
             }
           } catch (err) {
             logger.error(LOG_SOURCE, "Microphone access denied or error:", err);
@@ -758,8 +759,10 @@ export const useGeminiLive = ({
                   // Interrupt any ongoing output before changing context
                   flushOutput();
                   onSlideChange(slideNumber);
-                  // Send all slide context inputs atomically as one turn
-                  sendSlideContextTurn(slides[slideNumber - 1], transcript);
+                  // Send slide image/canvas and anchor in a single coherent turn
+                  const slide = slides[slideNumber - 1];
+                  const anchor = buildSlideAnchorText(slide, transcript);
+                  sendMessage({ slide, text: anchor, turnComplete: true });
                   runWithOpenSession((session) => {
                     session.sendToolResponse({
                       functionResponses: {
@@ -1045,14 +1048,13 @@ export const useGeminiLive = ({
     generalInfo,
     transcript,
     setTranscript,
-    sendTextMessage,
+    sendMessage,
     selectedLanguage,
     selectedVoice,
     selectedModel,
     userCustomPrompt,
     onSlideChange,
     onRenderCanvas,
-    sendSlideImageContext,
     apiKey,
     cleanupConnectionResources,
     currentSlideIndex,
@@ -1060,22 +1062,34 @@ export const useGeminiLive = ({
 
   const replay = useCallback(() => {
     logger.debug(LOG_SOURCE, "replay() called.");
-    sendTextMessage("Please repeat your explanation for this slide.");
-  }, [sendTextMessage]);
+    sendMessage({
+      text: "Please repeat your explanation for this slide.",
+      turnComplete: true,
+    });
+  }, [sendMessage]);
   const next = useCallback(() => {
     logger.debug(LOG_SOURCE, "next() called.");
-    sendTextMessage("Go to the next slide and explain it.");
-  }, [sendTextMessage]);
+    sendMessage({
+      text: "Go to the next slide and explain it.",
+      turnComplete: true,
+    });
+  }, [sendMessage]);
   const previous = useCallback(() => {
     logger.debug(LOG_SOURCE, "previous() called.");
-    sendTextMessage("Go to the previous slide and explain it.");
-  }, [sendTextMessage]);
+    sendMessage({
+      text: "Go to the previous slide and explain it.",
+      turnComplete: true,
+    });
+  }, [sendMessage]);
   const goToSlide = useCallback(
     (slideNumber: number) => {
       logger.debug(LOG_SOURCE, `goToSlide(${slideNumber}) called.`);
-      sendTextMessage(`Go to slide number ${slideNumber} and explain it.`);
+      sendMessage({
+        text: `Go to slide number ${slideNumber} and explain it.`,
+        turnComplete: true,
+      });
     },
-    [sendTextMessage]
+    [sendMessage]
   );
 
   useEffect(() => {
@@ -1095,7 +1109,7 @@ export const useGeminiLive = ({
     end,
     error,
     goToSlide,
-    sendTextMessage,
+    sendMessage,
     requestExplanation,
   };
 };

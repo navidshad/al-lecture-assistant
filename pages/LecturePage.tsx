@@ -227,7 +227,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
     end,
     error,
     goToSlide,
-    sendTextMessage,
+    sendMessage,
     requestExplanation,
   } = useGeminiLive({
     slides: slides,
@@ -424,14 +424,14 @@ const LecturePage: React.FC<LecturePageProps> = ({
   const handleSendMessage = useCallback(
     (message: string) => {
       logger.debug(LOG_SOURCE, "handleSendMessage called for typed text.");
-      if (!sendTextMessage) return;
+      if (!sendMessage) return;
 
       // Optimistically add the user's typed message to the transcript.
       // The `inputTranscription` event is for voice input, not for messages sent via this text input.
       setTranscript((prev) => [...prev, { speaker: "user", text: message }]);
-      sendTextMessage(message);
+      sendMessage({ text: message, turnComplete: true });
     },
-    [sendTextMessage, setTranscript]
+    [sendMessage, setTranscript]
   );
 
   const handleEndSession = useCallback(async () => {
