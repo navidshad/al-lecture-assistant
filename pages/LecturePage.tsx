@@ -42,6 +42,8 @@ const LecturePage: React.FC<LecturePageProps> = ({
     session.currentSlideIndex
   );
   const [isMuted, setIsMuted] = useState(true);
+  const autoMuteTimerRef = useRef<number | null>(null);
+  const lastTranscriptLengthRef = useRef<number>(session.transcript.length);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>(
     session.transcript
   );
@@ -312,6 +314,54 @@ const LecturePage: React.FC<LecturePageProps> = ({
     startLecture();
   };
 
+  // Auto-mute 1.5s after AI starts speaking unless the turn switches back to the user
+  useEffect(() => {
+    const prevLen = lastTranscriptLengthRef.current;
+    const currLen = transcript.length;
+    if (currLen > prevLen) {
+      const last = transcript[currLen - 1];
+      // New AI output started: schedule auto-mute
+      if (last?.speaker === "ai") {
+        if (autoMuteTimerRef.current) {
+          window.clearTimeout(autoMuteTimerRef.current);
+        }
+        autoMuteTimerRef.current = window.setTimeout(() => {
+          // If user has not started speaking during the delay, enforce mute
+          const latest = transcript[transcript.length - 1];
+          const userIsSpeaking = latest?.speaker === "user";
+          if (!userIsSpeaking) {
+            setIsMuted(true);
+          }
+          autoMuteTimerRef.current = null;
+        }, 1500);
+      }
+    }
+    lastTranscriptLengthRef.current = currLen;
+    return () => {
+      // no-op cleanup; timer is cleared elsewhere when needed
+    };
+  }, [transcript]);
+
+  // If user starts speaking while a mute timer is pending, cancel it
+  useEffect(() => {
+    if (!autoMuteTimerRef.current) return;
+    const last = transcript[transcript.length - 1];
+    if (last?.speaker === "user") {
+      window.clearTimeout(autoMuteTimerRef.current);
+      autoMuteTimerRef.current = null;
+    }
+  }, [transcript]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoMuteTimerRef.current) {
+        window.clearTimeout(autoMuteTimerRef.current);
+        autoMuteTimerRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (session.transcript.length > 0) {
       logger.log(
@@ -328,6 +378,10 @@ const LecturePage: React.FC<LecturePageProps> = ({
     logger.log(LOG_SOURCE, "handleReconnect called.");
     startLecture();
   }, [startLecture]);
+
+  const handleMuteToggle = useCallback(() => {
+    setIsMuted((prev) => !prev);
+  }, []);
 
   const handleNext = useCallback(() => {
     logger.debug(LOG_SOURCE, "handleNext called.");
@@ -548,7 +602,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
           {hasLectureStarted ? (
             <Controls
               isMuted={isMuted}
-              onMuteToggle={() => setIsMuted((prev) => !prev)}
+              onMuteToggle={handleMuteToggle}
               onReplay={replay}
               onNext={handleNext}
               onPrevious={handlePrevious}
