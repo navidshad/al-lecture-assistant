@@ -158,6 +158,9 @@ export const useGeminiLive = ({
   const audioContextRef = useRef<AudioContext | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  // Incrementing sequence number to identify the latest live connection.
+  // Used to ignore late events from previous connections (e.g., onclose) to avoid false DISCONNECTED states.
+  const connectSeqRef = useRef(0);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const audioSourcesRef = useRef(new Set<AudioBufferSourceNode>());
@@ -509,6 +512,9 @@ export const useGeminiLive = ({
     setSessionState(LectureSessionState.CONNECTING);
     setError(null);
 
+    // Bump sequence to tag this connection as the latest one
+    const thisConnectSeq = ++connectSeqRef.current;
+
     const ai = new GoogleGenAI({ apiKey: apiKey ?? process.env.API_KEY! });
     outputAudioContextRef.current = new (window.AudioContext ||
       (window as any).webkitAudioContext)({ sampleRate: 24000 });
@@ -600,6 +606,10 @@ export const useGeminiLive = ({
       ...sessionConfig,
       callbacks: {
         onopen: async () => {
+          // Ignore if this open belongs to an older connection
+          if (thisConnectSeq !== connectSeqRef.current) {
+            return;
+          }
           logger.log(LOG_SOURCE, "Session opened successfully.");
           sessionOpenRef.current = true;
           try {
@@ -719,6 +729,10 @@ export const useGeminiLive = ({
           }
         },
         onmessage: async (message: LiveServerMessage) => {
+          // Ignore messages from older connections
+          if (thisConnectSeq !== connectSeqRef.current) {
+            return;
+          }
           if (message.serverContent) {
             setSessionState(LectureSessionState.LECTURING);
           }
@@ -987,6 +1001,10 @@ export const useGeminiLive = ({
           }
         },
         onerror: (e: ErrorEvent) => {
+          // Ignore errors from older connections
+          if (thisConnectSeq !== connectSeqRef.current) {
+            return;
+          }
           logger.error(LOG_SOURCE, "Session error event received.", e);
           sessionOpenRef.current = false;
           setError("A connection error occurred. Please try to reconnect.");
@@ -994,6 +1012,10 @@ export const useGeminiLive = ({
           setSessionState(LectureSessionState.DISCONNECTED);
         },
         onclose: (e: CloseEvent) => {
+          // Ignore closes from older connections (e.g., cleanup of previous session)
+          if (thisConnectSeq !== connectSeqRef.current) {
+            return;
+          }
           logger.warn(
             LOG_SOURCE,
             "Session close event received. Code:",
