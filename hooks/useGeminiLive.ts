@@ -676,15 +676,15 @@ export const useGeminiLive = ({
               .join("\n");
 
             if (isReconnect) {
-              logger.log(
-                LOG_SOURCE,
-                "Reconnecting. Sending concise context to resume."
-              );
+              logger.log(LOG_SOURCE, "Reconnecting. Greeting-only resume.");
               const currentSlideNumber = currentSlideIndex + 1;
-              // Send the image of the current slide first for visual context.
-              sendSlideImageContext(slides[currentSlideIndex]);
-              // Strongly re-anchor to the current slide
-              sendStrongSlideAnchor(slides[currentSlideIndex], transcript);
+              const instruction = `INSTRUCTION: You are resuming an existing lecture. ONLY say: "We are on slide ${currentSlideNumber}, ready to continue!" Do not explain any content. Wait for the user to proceed.`;
+              sendTextMessage(instruction);
+              runWithOpenSession((session) => {
+                try {
+                  session.sendRealtimeInput?.({ event: "end_of_turn" });
+                } catch {}
+              });
             } else {
               // For a new lecture, send context and instructions separately for clarity.
               sendSlideImageContext(slides[0]);
