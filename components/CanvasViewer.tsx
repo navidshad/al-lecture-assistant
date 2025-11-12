@@ -83,9 +83,12 @@ const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
       </div>
 
       {/* Content area */}
-      <div className="flex-1 w-full px-6 py-4 overflow-y-auto overflow-x-hidden min-h-0">
+      <div
+        className="flex-1 w-full px-6 py-4 overflow-y-auto overflow-x-hidden min-h-0"
+        dir="auto"
+      >
         {contentBlocks.map((block, index) => (
-          <div key={index} className="text-left text-gray-200 w-full">
+          <div key={index} className="text-gray-200 w-full">
             <MarkdownRenderer markdown={block.content} />
           </div>
         ))}

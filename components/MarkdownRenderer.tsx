@@ -72,7 +72,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
   };
 
   return (
-    <div className="markdown-content text-gray-200 [&>*:first-child]:mt-0">
+    <div
+      className="markdown-content text-gray-200 [&>*:first-child]:mt-0"
+      dir="auto"
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkEmoji]}
         rehypePlugins={[
