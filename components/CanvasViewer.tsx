@@ -4,11 +4,12 @@ import MarkdownRenderer from "./MarkdownRenderer";
 import { fixMarkdownContent } from "../services/genaiClient";
 import { useToast } from "../hooks/useToast";
 import { useApiKey } from "../hooks/useApiKey";
-import { Loader2 } from "lucide-react";
+import { Loader2, Copy, Check } from "lucide-react";
 
 const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
   const [contentBlocks, setContentBlocks] = useState<CanvasBlock[]>(content);
   const [isFixing, setIsFixing] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
   const { showToast } = useToast();
   const { apiKey } = useApiKey();
 
@@ -45,6 +46,24 @@ const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
     }
   };
 
+  const handleCopyMarkdown = async () => {
+    try {
+      // Join all blocks' content with double newline separator
+      const markdown = contentBlocks.map((block) => block.content).join("\n\n");
+      
+      await navigator.clipboard.writeText(markdown);
+      setIsCopied(true);
+      
+      // Reset copied state after 2 seconds
+      setTimeout(() => {
+        setIsCopied(false);
+      }, 2000);
+    } catch (error) {
+      console.error("Failed to copy markdown:", error);
+      showToast("Failed to copy markdown to clipboard", "error");
+    }
+  };
+
   if (!contentBlocks || contentBlocks.length === 0) {
     return (
       <div className="relative w-full h-full bg-black rounded-lg shadow-2xl flex items-center justify-center overflow-auto border border-gray-700 p-6">
@@ -61,27 +80,46 @@ const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
 
   return (
     <div className="relative w-full h-full bg-black rounded-lg shadow-2xl flex flex-col border border-gray-700 overflow-hidden">
-      {/* Header with note and Fix button */}
+      {/* Header with note and buttons */}
       <div className="w-full flex justify-between items-center p-4 border-b border-gray-700 flex-shrink-0">
         <div className="text-sm text-gray-400">
           <span className="font-medium text-gray-300">Tip:</span> Use the Fix
           button to repair malformed markdown, unclosed code fences, broken math
           syntax, or diagram formatting issues.
         </div>
-        <button
-          onClick={handleFixRendering}
-          disabled={isFixing || !apiKey}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium transition-colors flex-shrink-0"
-        >
-          {isFixing ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Fixing...</span>
-            </>
-          ) : (
-            <span>Fix rendering</span>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCopyMarkdown}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-md text-sm font-medium transition-colors flex-shrink-0"
+            title="Copy markdown content"
+          >
+            {isCopied ? (
+              <>
+                <Check className="w-4 h-4" />
+                <span>Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                <span>Copy</span>
+              </>
+            )}
+          </button>
+          <button
+            onClick={handleFixRendering}
+            disabled={isFixing || !apiKey}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium transition-colors flex-shrink-0"
+          >
+            {isFixing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Fixing...</span>
+              </>
+            ) : (
+              <span>Fix rendering</span>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Content area */}
