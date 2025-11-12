@@ -20,6 +20,7 @@ import {
   LectureSessionState,
   TranscriptEntry,
   CanvasBlock,
+  ChatAttachment,
 } from "../types";
 import { encode, decode, decodeAudioData } from "../services/audioUtils";
 import { logger } from "../services/logger";
@@ -286,6 +287,7 @@ export const useGeminiLive = ({
   type SendMessageOptions = {
     slide?: Slide;
     text?: string | string[];
+    attachments?: ChatAttachment[];
     turnComplete?: boolean;
   };
 
@@ -298,7 +300,7 @@ export const useGeminiLive = ({
       );
       return;
     }
-    const { slide, text } = options;
+    const { slide, text, attachments } = options;
     const turnComplete = options.turnComplete ?? true;
     const parts: any[] = [];
     if (slide) {
@@ -316,6 +318,26 @@ export const useGeminiLive = ({
         });
       }
     }
+    
+    // Process attachments (only images are supported)
+    if (attachments && attachments.length > 0) {
+      for (const attachment of attachments) {
+        if (attachment.type === 'image' || attachment.type === 'selection') {
+          // Image attachments (including selections)
+          const base64Data = attachment.data.split(",")[1];
+          if (base64Data) {
+            parts.push({
+              inlineData: {
+                mimeType: attachment.mimeType || "image/png",
+                data: base64Data,
+              },
+            });
+          }
+        }
+        // Only images are supported, ignore other types
+      }
+    }
+    
     if (typeof text === "string") {
       parts.push({ text });
     } else if (Array.isArray(text)) {

@@ -6,6 +6,7 @@ import {
   CanvasBlock,
   LectureSession,
   SlideGroup,
+  ChatAttachment,
 } from "../types";
 import { useGeminiLive } from "../hooks/useGeminiLive";
 import { useToast } from "../hooks/useToast";
@@ -23,6 +24,7 @@ import { useSessionPersistence } from "../hooks/useSessionPersistence";
 import GroupedSlidesThumbStrip from "../components/Lecture/GroupedSlidesThumbStrip";
 import { groupSlidesByAI } from "../services/slideGrouper";
 import { useLocalStorage } from "../utils/storage";
+import { useAttachments } from "../hooks/useAttachments";
 
 const LOG_SOURCE = "LecturePage";
 
@@ -67,8 +69,10 @@ const LecturePage: React.FC<LecturePageProps> = ({
   const [hoverPreviewIndex, setHoverPreviewIndex] = useState<number | null>(
     null
   );
+  const [isRectangleToolActive, setIsRectangleToolActive] = useState(false);
 
   const { showToast } = useToast();
+  const { attachments, addFile, addSelection, removeAttachment, clearAttachments } = useAttachments();
 
   const { saveSessionState } = useSessionPersistence({
     session,
@@ -383,6 +387,28 @@ const LecturePage: React.FC<LecturePageProps> = ({
     setIsMuted((prev) => !prev);
   }, []);
 
+  const handleToolActivate = useCallback(() => {
+    // Open chat panel if it's closed when any tool is activated
+    if (!isTranscriptVisible) {
+      setIsTranscriptVisible(true);
+    }
+  }, [isTranscriptVisible]);
+
+  const handleRectangleToolToggle = useCallback(() => {
+    setIsRectangleToolActive((prev) => !prev);
+  }, []);
+
+  const handleRectangleToolDeactivate = useCallback(() => {
+    setIsRectangleToolActive(false);
+  }, []);
+
+  const handleSelectionAdd = useCallback(
+    (imageDataUrl: string) => {
+      addSelection(imageDataUrl);
+    },
+    [addSelection]
+  );
+
   const handleNext = useCallback(() => {
     logger.debug(LOG_SOURCE, "handleNext called.");
     if (currentSlideIndex < slides.length - 1) {
@@ -422,16 +448,28 @@ const LecturePage: React.FC<LecturePageProps> = ({
   );
 
   const handleSendMessage = useCallback(
-    (message: string) => {
+    (message: string, messageAttachments?: ChatAttachment[]) => {
       logger.debug(LOG_SOURCE, "handleSendMessage called for typed text.");
       if (!sendMessage) return;
 
       // Optimistically add the user's typed message to the transcript.
       // The `inputTranscription` event is for voice input, not for messages sent via this text input.
-      setTranscript((prev) => [...prev, { speaker: "user", text: message }]);
-      sendMessage({ text: message, turnComplete: true });
+      setTranscript((prev) => [
+        ...prev,
+        {
+          speaker: "user",
+          text: message,
+          attachments: messageAttachments,
+        },
+      ]);
+      sendMessage({
+        text: message,
+        attachments: messageAttachments,
+        turnComplete: true,
+      });
+      clearAttachments();
     },
-    [sendMessage, setTranscript]
+    [sendMessage, setTranscript, clearAttachments]
   );
 
   const handleEndSession = useCallback(async () => {
@@ -491,6 +529,11 @@ const LecturePage: React.FC<LecturePageProps> = ({
           isDesktop={true}
           onSendMessage={handleSendMessage}
           sessionState={sessionState}
+          attachments={attachments}
+          onAddFile={addFile}
+          onAddSelection={addSelection}
+          onRemoveAttachment={removeAttachment}
+          onClearAttachments={clearAttachments}
         />
       </div>
 
@@ -520,6 +563,11 @@ const LecturePage: React.FC<LecturePageProps> = ({
                     sessionState={sessionState}
                     error={error}
                     onReconnect={handleReconnect}
+                    isRectangleToolActive={isRectangleToolActive}
+                    onRectangleToolToggle={handleRectangleToolToggle}
+                    onSelectionAdd={handleSelectionAdd}
+                    onRectangleToolDeactivate={handleRectangleToolDeactivate}
+                    onToolActivate={handleToolActivate}
                   />
                   {hoverPreviewIndex != null &&
                     hoverPreviewIndex !== currentSlideIndex &&
@@ -538,7 +586,12 @@ const LecturePage: React.FC<LecturePageProps> = ({
                     activeTab === "canvas" ? "block" : "hidden"
                   } w-full h-full`}
                 >
-                  <CanvasViewer content={currentCanvasContent} />
+                  <CanvasViewer
+                    content={currentCanvasContent}
+                    isRectangleToolActive={isRectangleToolActive}
+                    onSelectionAdd={handleSelectionAdd}
+                    onRectangleToolDeactivate={handleRectangleToolDeactivate}
+                  />
                 </div>
               </div>
             </div>
@@ -552,6 +605,11 @@ const LecturePage: React.FC<LecturePageProps> = ({
                 isDesktop={false}
                 onSendMessage={handleSendMessage}
                 sessionState={sessionState}
+                attachments={attachments}
+                onAddFile={addFile}
+                onAddSelection={addSelection}
+                onRemoveAttachment={removeAttachment}
+                onClearAttachments={clearAttachments}
               />
             </div>
 

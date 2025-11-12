@@ -1,17 +1,55 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { CanvasBlock } from "../types";
 import MarkdownRenderer from "./MarkdownRenderer";
 import { fixMarkdownContent } from "../services/genaiClient";
 import { useToast } from "../hooks/useToast";
 import { useApiKey } from "../hooks/useApiKey";
 import { Loader2, Copy, Check } from "lucide-react";
+import SelectionTool from "./Selection/SelectionTool";
+import { captureElementAsImage, cropImage } from "../utils/imageUtils";
 
-const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
+interface CanvasViewerProps {
+  content: CanvasBlock[];
+  isRectangleToolActive?: boolean;
+  onSelectionAdd?: (imageDataUrl: string) => void;
+  onRectangleToolDeactivate?: () => void;
+}
+
+const CanvasViewer: React.FC<CanvasViewerProps> = ({
+  content,
+  isRectangleToolActive = false,
+  onSelectionAdd,
+  onRectangleToolDeactivate,
+}) => {
   const [contentBlocks, setContentBlocks] = useState<CanvasBlock[]>(content);
   const [isFixing, setIsFixing] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const { showToast } = useToast();
   const { apiKey } = useApiKey();
+  const contentRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleSelectionAdd = async (bounds: { x: number; y: number; width: number; height: number }) => {
+    if (!contentRef.current || !containerRef.current || !onSelectionAdd) return;
+
+    try {
+      // First capture the entire canvas content as image
+      const canvasImage = await captureElementAsImage(contentRef.current);
+      
+      // Then crop the selected area
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const croppedImage = await cropImage(
+        canvasImage,
+        bounds,
+        containerRect.width,
+        containerRect.height
+      );
+      onSelectionAdd(croppedImage);
+    } catch (error) {
+      console.error('Failed to capture and crop canvas:', error);
+      showToast('Failed to capture selection', 'error');
+    }
+  };
 
   // Sync contentBlocks when content prop changes
   useEffect(() => {
@@ -124,14 +162,30 @@ const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
 
       {/* Content area */}
       <div
-        className="flex-1 w-full px-6 py-4 overflow-y-auto overflow-x-hidden min-h-0"
-        dir="auto"
+        ref={containerRef}
+        className="relative flex-1 w-full overflow-hidden min-h-0"
       >
-        {contentBlocks.map((block, index) => (
-          <div key={index} className="text-gray-200 w-full">
-            <MarkdownRenderer markdown={block.content} />
-          </div>
-        ))}
+        <div
+          ref={contentRef}
+          className="w-full px-6 py-4 overflow-y-auto overflow-x-hidden min-h-0"
+          dir="auto"
+        >
+          {contentBlocks.map((block, index) => (
+            <div key={index} className="text-gray-200 w-full">
+              <MarkdownRenderer markdown={block.content} />
+            </div>
+          ))}
+        </div>
+        
+        {/* Selection Tool */}
+        {isRectangleToolActive && onSelectionAdd && (
+          <SelectionTool
+            isActive={isRectangleToolActive}
+            containerRef={containerRef}
+            onSelectionAdd={handleSelectionAdd}
+            onDeactivate={onRectangleToolDeactivate}
+          />
+        )}
       </div>
     </div>
   );

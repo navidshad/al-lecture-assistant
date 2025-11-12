@@ -1,14 +1,22 @@
 import React, { useEffect, useRef, useState } from "react";
-import { TranscriptEntry, LectureSessionState } from "../types";
+import { TranscriptEntry, LectureSessionState, ChatAttachment } from "../types";
 import { User, Bot, Send } from "lucide-react";
+import AttachmentList from "./Chat/AttachmentList";
+import FileUploadButton from "./Chat/FileUploadButton";
+import MessageAttachments from "./Chat/MessageAttachments";
 
 interface TranscriptPanelProps {
   isVisible: boolean;
   onClose: () => void;
   transcript: TranscriptEntry[];
   isDesktop?: boolean;
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, attachments?: ChatAttachment[]) => void;
   sessionState: LectureSessionState;
+  attachments: ChatAttachment[];
+  onAddFile: (file: File) => Promise<void>;
+  onAddSelection: (imageDataUrl: string) => void;
+  onRemoveAttachment: (id: string) => void;
+  onClearAttachments: () => void;
 }
 
 const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
@@ -18,20 +26,47 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   isDesktop = false,
   onSendMessage,
   sessionState,
+  attachments,
+  onAddFile,
+  onAddSelection,
+  onRemoveAttachment,
+  onClearAttachments,
 }) => {
   const endOfMessagesRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
     endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript]);
 
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [message]);
+
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (message.trim()) {
-      onSendMessage(message.trim());
+    const hasContent = message.trim() || attachments.length > 0;
+    if (hasContent) {
+      onSendMessage(message.trim(), attachments.length > 0 ? attachments : undefined);
       setMessage("");
+      onClearAttachments();
     }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleFormSubmit(e as any);
+    }
+  };
+
+  const handleImageFileSelect = async (file: File) => {
+    await onAddFile(file);
   };
 
   const isInputActive = [
@@ -106,12 +141,20 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
                       </span>
                     </div>
                   )}
-                  <p
-                    dir="auto"
-                    className={`text-gray-200 ${isDesktop ? "" : "text-xs"}`}
-                  >
-                    {entry.text}
-                  </p>
+                  {entry.text && (
+                    <p
+                      dir="auto"
+                      className={`text-gray-200 ${isDesktop ? "" : "text-xs"}`}
+                    >
+                      {entry.text}
+                    </p>
+                  )}
+                  {entry.attachments && entry.attachments.length > 0 && (
+                    <MessageAttachments
+                      attachments={entry.attachments}
+                      isDesktop={isDesktop}
+                    />
+                  )}
                 </div>
               </div>
             ))}
@@ -128,28 +171,52 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
         <div
           className={`${
             isDesktop ? "p-4" : "p-2 pt-0"
-          } flex-shrink-0 flex items-center`}
+          } flex-shrink-0`}
         >
+          {/* Attachment previews */}
+          <AttachmentList
+            attachments={attachments}
+            onRemove={onRemoveAttachment}
+            isDesktop={isDesktop}
+          />
+          
+          {/* Input area */}
           <form
             onSubmit={handleFormSubmit}
-            className="flex items-center justify-between mb-0 w-full gap-2"
+            className="flex items-end gap-2 w-full"
           >
-            <input
-              type="text"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder={
-                isInputActive ? "Ask a question..." : "Session not active"
-              }
-              disabled={!isInputActive}
-              className={`flex-1 w-full bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors disabled:bg-gray-800 disabled:cursor-not-allowed ${
-                isDesktop ? "px-4 py-2" : "px-3 py-1.5 text-xs"
-              }`}
-              aria-label="Chat input"
-            />
+            <div className="flex-1 flex flex-col gap-2">
+              {/* File upload buttons */}
+              <div className="flex items-center gap-2">
+                <FileUploadButton
+                  onFileSelect={handleImageFileSelect}
+                  maxSizeMB={2}
+                  label="Image"
+                  isDesktop={isDesktop}
+                />
+              </div>
+              
+              {/* Textarea */}
+              <textarea
+                ref={textareaRef}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  isInputActive ? "Ask a question... (Shift+Enter for new line)" : "Session not active"
+                }
+                disabled={!isInputActive}
+                rows={1}
+                className={`w-full bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors disabled:bg-gray-800 disabled:cursor-not-allowed resize-none overflow-hidden ${
+                  isDesktop ? "px-4 py-2 text-sm" : "px-3 py-1.5 text-xs"
+                }`}
+                aria-label="Chat input"
+              />
+            </div>
+            
             <button
               type="submit"
-              disabled={!isInputActive || !message.trim()}
+              disabled={!isInputActive || (!message.trim() && attachments.length === 0)}
               className={`flex-shrink-0 flex items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-blue-500 bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed ${
                 isDesktop ? "h-10 w-10" : "h-8 w-8"
               }`}

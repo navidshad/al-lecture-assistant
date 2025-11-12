@@ -1,12 +1,20 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Slide, LectureSessionState } from '../types';
 import { Loader2, Wifi, Power, WifiOff, RefreshCw } from 'lucide-react';
+import Toolbox from './Lecture/Toolbox';
+import SelectionTool from './Selection/SelectionTool';
+import { cropImage } from '../utils/imageUtils';
 
 interface SlideViewerProps {
   slide: Slide;
   sessionState: LectureSessionState;
   error: string | null;
   onReconnect?: () => void;
+  isRectangleToolActive?: boolean;
+  onRectangleToolToggle?: () => void;
+  onSelectionAdd?: (imageDataUrl: string) => void;
+  onRectangleToolDeactivate?: () => void;
+  onToolActivate?: () => void;
 }
 
 const StateOverlay: React.FC<{ icon: React.ReactNode; title: string; message: string }> = ({ icon, title, message }) => (
@@ -18,7 +26,36 @@ const StateOverlay: React.FC<{ icon: React.ReactNode; title: string; message: st
 );
 
 
-const SlideViewer: React.FC<SlideViewerProps> = ({ slide, sessionState, error, onReconnect }) => {
+const SlideViewer: React.FC<SlideViewerProps> = ({
+  slide,
+  sessionState,
+  error,
+  onReconnect,
+  isRectangleToolActive = false,
+  onRectangleToolToggle,
+  onSelectionAdd,
+  onRectangleToolDeactivate,
+  onToolActivate,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+
+  const handleSelectionAdd = async (bounds: { x: number; y: number; width: number; height: number }) => {
+    if (!containerRef.current || !imageRef.current || !onSelectionAdd) return;
+
+    try {
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const croppedImage = await cropImage(
+        slide.imageDataUrl,
+        bounds,
+        containerRect.width,
+        containerRect.height
+      );
+      onSelectionAdd(croppedImage);
+    } catch (error) {
+      console.error('Failed to crop image:', error);
+    }
+  };
   const renderOverlay = () => {
     switch (sessionState) {
       case LectureSessionState.CONNECTING:
@@ -50,13 +87,39 @@ const SlideViewer: React.FC<SlideViewerProps> = ({ slide, sessionState, error, o
   };
 
   return (
-    <div className="relative w-full h-full bg-black rounded-lg shadow-2xl flex items-center justify-center overflow-hidden border border-gray-700">
-      <img
-        src={slide.imageDataUrl}
-        alt={`Slide ${slide.pageNumber}`}
-        className="object-contain w-full h-full"
-      />
-      {renderOverlay()}
+    <div className="relative w-full h-full flex flex-col bg-black rounded-lg shadow-2xl overflow-hidden border border-gray-700">
+      {/* Toolbox */}
+      {onRectangleToolToggle && (
+        <Toolbox
+          isRectangleToolActive={isRectangleToolActive}
+          onRectangleToolToggle={onRectangleToolToggle}
+          onToolActivate={onToolActivate}
+        />
+      )}
+      
+      {/* Slide container */}
+      <div
+        ref={containerRef}
+        className="relative flex-1 flex items-center justify-center overflow-hidden"
+      >
+        <img
+          ref={imageRef}
+          src={slide.imageDataUrl}
+          alt={`Slide ${slide.pageNumber}`}
+          className="object-contain w-full h-full"
+        />
+        {renderOverlay()}
+        
+        {/* Selection Tool */}
+        {isRectangleToolActive && onSelectionAdd && (
+          <SelectionTool
+            isActive={isRectangleToolActive}
+            containerRef={containerRef}
+            onSelectionAdd={handleSelectionAdd}
+            onDeactivate={onRectangleToolDeactivate}
+          />
+        )}
+      </div>
     </div>
   );
 };

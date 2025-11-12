@@ -40,10 +40,19 @@ export enum LectureSessionState {
   DISCONNECTED = "DISCONNECTED",
 }
 
+export interface ChatAttachment {
+  id: string;
+  type: 'image' | 'file' | 'selection'; // 'selection' for cropped slide/canvas pieces
+  data: string; // base64 data URL or file content
+  mimeType: string; // e.g., 'image/png'
+  fileName?: string; // for file uploads
+}
+
 export interface TranscriptEntry {
   speaker: "user" | "ai";
   text: string;
   slideNumber?: number;
+  attachments?: ChatAttachment[];
 }
 
 export type CanvasBlockType = "markdown" | "diagram" | "ascii" | "table";
