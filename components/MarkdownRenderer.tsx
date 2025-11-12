@@ -98,7 +98,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
             if (className?.includes("katex")) {
               return (
                 <span
-                  className={`${className} inline-block my-1 katex-inline`}
+                  className={`${className} inline katex-inline`}
                   {...props}
                 >
                   {children}
