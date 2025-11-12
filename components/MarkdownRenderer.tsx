@@ -8,6 +8,7 @@ import rehypePrismPlus from "rehype-prism-plus";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import Mermaid from "./Mermaid";
 import "katex/dist/katex.min.css";
+import "./katex-dark.css";
 import "prismjs/themes/prism-tomorrow.css";
 
 interface MarkdownRendererProps {
@@ -79,11 +80,47 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkEmoji]}
         rehypePlugins={[
-          [rehypeKatex, { throwOnError: false }],
+          [
+            rehypeKatex,
+            {
+              throwOnError: false,
+              errorColor: "#cc0000",
+              fleqn: false,
+              output: "html",
+            },
+          ],
           [rehypePrismPlus, { ignoreMissing: true }],
           [rehypeSanitize, extendedSchema],
         ]}
         components={{
+          span: ({ node, className, children, ...props }) => {
+            // Handle inline math (KaTeX outputs spans with katex class)
+            if (className?.includes("katex")) {
+              return (
+                <span
+                  className={`${className} inline-block my-1 katex-inline`}
+                  {...props}
+                >
+                  {children}
+                </span>
+              );
+            }
+            return <span {...props}>{children}</span>;
+          },
+          div: ({ node, className, children, ...props }) => {
+            // Handle block math (KaTeX outputs divs with katex-display class)
+            if (className?.includes("katex-display")) {
+              return (
+                <div
+                  className={`${className} my-4 overflow-x-auto katex-block`}
+                  {...props}
+                >
+                  {children}
+                </div>
+              );
+            }
+            return <div {...props}>{children}</div>;
+          },
           h1: ({ node, ...props }) => (
             <h1
               className="text-3xl font-bold mb-3 mt-4 text-gray-100"

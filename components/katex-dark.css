@@ -1,0 +1,129 @@
+/* KaTeX Dark Theme Styles */
+
+/* Base KaTeX styling */
+.katex {
+  color: #e5e7eb !important;
+  font-size: 1.1em;
+}
+
+.katex-display {
+  color: #e5e7eb !important;
+  margin: 1rem 0 !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+
+.katex-display > .katex {
+  display: inline-block;
+  text-align: initial;
+}
+
+/* Text elements */
+.katex .base {
+  color: #e5e7eb !important;
+}
+
+.katex .mord {
+  color: #e5e7eb !important;
+}
+
+.katex .mrel {
+  color: #9ca3af !important;
+}
+
+.katex .mop {
+  color: #60a5fa !important;
+}
+
+.katex .mbin {
+  color: #9ca3af !important;
+}
+
+.katex .mopen,
+.katex .mclose {
+  color: #9ca3af !important;
+}
+
+/* Fractions */
+.katex .mfrac {
+  border-color: #4b5563 !important;
+}
+
+.katex .mfrac > span > span {
+  border-color: #4b5563 !important;
+}
+
+/* Radicals */
+.katex .sqrt > .vlist-t {
+  border-color: #4b5563 !important;
+}
+
+/* Operators and functions */
+.katex .mop.op-symbol {
+  color: #60a5fa !important;
+}
+
+.katex .mop.op-function {
+  color: #60a5fa !important;
+}
+
+/* Numbers */
+.katex .mord.mathnormal {
+  color: #e5e7eb !important;
+}
+
+/* Variables */
+.katex .mord.mathnormal.mathit {
+  color: #fbbf24 !important;
+  font-style: italic;
+}
+
+/* Greek letters */
+.katex .mord.mathnormal.mathit > .mord {
+  color: #fbbf24 !important;
+}
+
+/* Subscripts and superscripts */
+.katex .msupsub {
+  color: #e5e7eb !important;
+}
+
+/* Delimiters */
+.katex .delimsizing {
+  color: #9ca3af !important;
+}
+
+/* Accents */
+.katex .accent {
+  color: #e5e7eb !important;
+}
+
+/* Spacing adjustments */
+.katex-inline {
+  margin: 0 0.1em;
+  vertical-align: baseline;
+}
+
+.katex-block {
+  margin: 1rem 0;
+}
+
+/* Ensure proper rendering on dark background */
+.katex .sizing {
+  color: #e5e7eb !important;
+}
+
+.katex .vlist-t {
+  color: #e5e7eb !important;
+}
+
+/* Error styling */
+.katex .katex-error {
+  color: #ef4444 !important;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
