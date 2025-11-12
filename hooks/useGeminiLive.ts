@@ -101,34 +101,20 @@ const setActiveSlideFunctionDeclaration: FunctionDeclaration = {
   },
 };
 
-const renderCanvasFunctionDeclaration: FunctionDeclaration = {
-  name: "renderCanvas",
+const provideCanvasMarkdownFunctionDeclaration: FunctionDeclaration = {
+  name: "provideCanvasMarkdown",
   description:
-    "Render additional information on the canvas as pure Markdown blocks only. Do not use any third‑party extensions or embedded syntaxes (e.g., Mermaid diagrams, KaTeX/LaTeX math, HTML/SVG, images, or tables). Provide only plain Markdown text in 'content'.",
+    "Render markdown content on the canvas. Supports GFM, KaTeX math ($ and $$), Mermaid diagrams (```mermaid), emojis, code highlighting, tables, and all standard markdown features.",
   parameters: {
     type: Type.OBJECT,
     properties: {
-      contentBlocks: {
-        type: Type.ARRAY,
+      markdown: {
+        type: Type.STRING,
         description:
-          "An array of markdown blocks to render sequentially on the canvas.",
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            type: {
-              type: Type.STRING,
-              description: "Must be 'markdown'.",
-            },
-            content: {
-              type: Type.STRING,
-              description: "The markdown string for the block.",
-            },
-          },
-          required: ["type", "content"],
-        },
+          "Raw markdown string containing text, math, diagrams, emojis, etc. Use $...$ for inline math, $$...$$ for block math, and ```mermaid ... ``` for Mermaid diagrams.",
       },
     },
-    required: ["contentBlocks"],
+    required: ["markdown"],
   },
 };
 
@@ -495,7 +481,7 @@ export const useGeminiLive = ({
           {
             functionDeclarations: [
               setActiveSlideFunctionDeclaration,
-              renderCanvasFunctionDeclaration,
+              provideCanvasMarkdownFunctionDeclaration,
             ],
           },
         ],
@@ -525,8 +511,7 @@ export const useGeminiLive = ({
         - Focus on the ACTIVE slide. Do not discuss other slides or future content unless the user asks, but you can address content in other slides by mentioning the slide number.
         - If the user asks about a different slide, give a concise answer or teaser and ASK whether to switch: e.g., "Would you like me to jump to slide 7?" Do NOT change slides unless the user explicitly instructs.
         - When asked about another slide, avoid giving the full explanation until you are on that slide. Keep it short and then return to the current slide unless the user confirms switching.
-        - When presenting tabular data on the canvas, you MUST use a 'contentBlock' with type 'table'. Do not put tables inside 'markdown' blocks.
-        - **Function Call Response Handling:** After a tool call is confirmed as successful, do not repeat your previous statement. For example, if you state you are rendering a diagram and the \`renderCanvas\` tool call is successful, do not announce it again. Acknowledge the success silently and continue the conversation naturally.
+        - **Function Call Response Handling:** After a tool call is confirmed as successful, do not repeat your previous statement. For example, if you state you are rendering a diagram and the \`provideCanvasMarkdown\` tool call is successful, do not announce it again. Acknowledge the success silently and continue the conversation naturally.
         - When you see an anchor line \`ACTIVE SLIDE: N\` or after a successful \`setActiveSlide\` tool call, immediately switch context to slide N and continue ONLY with that slide. Do not finish or reference the previous slide unless asked.
         - If the user asks about another slide without switching, give a brief teaser and ask whether to switch. Do not change slides or fully explain it until confirmed.
         
@@ -538,26 +523,29 @@ export const useGeminiLive = ({
         - Prefer present tense and plain language unless the user requests otherwise.
         
         **Canvas for Clarification (Advanced):**
-        - You have a powerful tool: 'renderCanvas'. Use it proactively to enhance your explanations when the slide content is not enough, or when the user asks a question that would benefit from a visual aid.
-        - This function accepts a JSON object with a single key, 'contentBlocks', which is an array of objects.
+        - You have a powerful tool: 'provideCanvasMarkdown'. Use it proactively to enhance your explanations when the slide content is not enough, or when the user asks a question that would benefit from a visual aid.
+        - This function accepts a single 'markdown' parameter containing raw markdown text.
         
-        - **Supported 'type' values are:**
-          1.  'markdown': For formatted text, lists, and simple text. The 'content' should be a Markdown string.
-          2.  'diagram': For creating diagrams. The 'content' MUST be a valid Mermaid.js syntax string. Use this to illustrate processes, hierarchies, or relationships.
-          3.  'ascii': For text-based illustrations or sketches. The 'content' should be the ASCII art, which will be rendered in a monospace font.
-          4.  'table': For displaying tabular data. The 'content' MUST be a standard Markdown table string (using pipes | and hyphens -).
+        - **Supported Markdown Features:**
+          1.  Standard markdown: headings, lists, bold, italic, links, images, tables
+          2.  GitHub Flavored Markdown (GFM): task lists, strikethrough, autolinks
+          3.  Math: Use $...$ for inline math and $$...$$ for block math (KaTeX)
+          4.  Mermaid diagrams: Use \`\`\`mermaid code fences for flowcharts, sequence diagrams, etc.
+          5.  Code highlighting: Use \`\`\`language code fences for syntax-highlighted code
+          6.  Emojis: Use :emoji: syntax or unicode emojis
         
         - **Example Usage:**
-          If a user asks for a comparison, you could respond with a Markdown list and a Mermaid diagram:
-          { "contentBlocks": [ { "type": "markdown", "content": "Here is a comparison:" }, { "type": "diagram", "content": "graph TD; A-->B; A-->C;" } ] }
+          If a user asks for a comparison with math and a diagram, provide markdown like:
+          { "markdown": "# Comparison\\n\\nFormula: $E = mc^2$\\n\\nMermaid diagram: code fence with mermaid language tag followed by diagram syntax" }
         
         - **When to Use the Canvas:**
-          - To explain complex concepts that are hard to describe with words alone.
-          - To show code snippets (use a 'markdown' block with \`\`\`).
-          - To draw diagrams (e.g., flowcharts, sequence diagrams) using Mermaid syntax.
-          - To provide lists, tables, or step-by-step instructions.
+          - To explain complex concepts that are hard to describe with words alone
+          - To show code snippets with syntax highlighting
+          - To draw diagrams (flowcharts, sequence diagrams, etc.) using Mermaid
+          - To display mathematical formulas and equations
+          - To provide formatted lists, tables, or step-by-step instructions
         
-        - **Crucially:** After calling 'renderCanvas', you MUST inform the user. Say something like, "I've put a diagram on the canvas to illustrate that for you," or "Take a look at the canvas for the code example." This guides the user to the new visual information.`,
+        - **Crucially:** After calling 'provideCanvasMarkdown', you MUST inform the user. Say something like, "I've put a diagram on the canvas to illustrate that for you," or "Take a look at the canvas for the code example." This guides the user to the new visual information.`,
       },
     };
 
@@ -791,10 +779,10 @@ export const useGeminiLive = ({
                     });
                   });
                 }
-              } else if (fc.name === "renderCanvas") {
+              } else if (fc.name === "provideCanvasMarkdown") {
                 logger.log(
                   LOG_SOURCE,
-                  "renderCanvas raw args:",
+                  "provideCanvasMarkdown raw args:",
                   fc.args,
                   "(type:",
                   typeof fc.args,
@@ -807,17 +795,20 @@ export const useGeminiLive = ({
                   } catch {
                     logger.warn(
                       LOG_SOURCE,
-                      "Failed to parse JSON args for renderCanvas; rendering raw args as ascii"
+                      "Failed to parse JSON args for provideCanvasMarkdown; treating as markdown string"
                     );
-                    const fallbackBlocks = normalizeCanvasBlocks(parsedArgs);
-                    onRenderCanvas(fallbackBlocks);
+                    // Treat the string itself as markdown
+                    const contentBlocks = normalizeCanvasBlocks([
+                      { type: "markdown", content: parsedArgs },
+                    ]);
+                    onRenderCanvas(contentBlocks, currentSlideIndexRef.current);
                     runWithOpenSession((session) => {
                       session.sendToolResponse({
                         functionResponses: {
                           id: fc.id,
                           name: fc.name,
                           response: {
-                            result: `Rendered fallback 'ascii' block from raw string args.`,
+                            result: `OK. Canvas content has been rendered from string.`,
                           },
                         },
                       });
@@ -826,26 +817,24 @@ export const useGeminiLive = ({
                   }
                 }
 
-                logger.log(LOG_SOURCE, "renderCanvas parsed args:", parsedArgs);
-                const candidate =
-                  (parsedArgs as any)?.contentBlocks ?? parsedArgs;
                 logger.log(
                   LOG_SOURCE,
-                  "renderCanvas candidate contentBlocks:",
-                  candidate
+                  "provideCanvasMarkdown parsed args:",
+                  parsedArgs
                 );
-                const contentBlocks = normalizeCanvasBlocks(candidate);
-                logger.log(
-                  LOG_SOURCE,
-                  "renderCanvas normalized markdown blocks:",
-                  contentBlocks
-                );
+                const markdown =
+                  (parsedArgs as any)?.markdown ??
+                  (typeof parsedArgs === "string" ? parsedArgs : null);
 
-                if (contentBlocks.length > 0) {
+                if (markdown && typeof markdown === "string") {
                   logger.log(
                     LOG_SOURCE,
-                    `Processing renderCanvas function call.`
+                    `Processing provideCanvasMarkdown function call with markdown length: ${markdown.length}`
                   );
+                  // Convert markdown string to CanvasBlock array
+                  const contentBlocks = normalizeCanvasBlocks([
+                    { type: "markdown", content: markdown },
+                  ]);
                   onRenderCanvas(contentBlocks, currentSlideIndexRef.current);
                   runWithOpenSession((session) => {
                     session.sendToolResponse({
@@ -861,7 +850,7 @@ export const useGeminiLive = ({
                 } else {
                   logger.warn(
                     LOG_SOURCE,
-                    `renderCanvas received empty/invalid content; rendering raw args as ascii`,
+                    `provideCanvasMarkdown received invalid args; no markdown field found`,
                     parsedArgs
                   );
                   onRenderCanvas([
@@ -876,7 +865,7 @@ export const useGeminiLive = ({
                         id: fc.id,
                         name: fc.name,
                         response: {
-                          result: `Rendered fallback 'ascii' block from invalid args.`,
+                          result: `Rendered fallback block from invalid args.`,
                         },
                       },
                     });
