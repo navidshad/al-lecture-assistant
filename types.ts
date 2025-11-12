@@ -29,25 +29,24 @@ export interface LectureSession {
   slideGroups?: SlideGroup[];
 }
 
-
 export enum LectureSessionState {
-  IDLE = 'IDLE',
-  CONNECTING = 'CONNECTING',
-  READY = 'READY',
-  LECTURING = 'LECTURING',
-  LISTENING = 'LISTENING',
-  ENDED = 'ENDED',
-  ERROR = 'ERROR',
-  DISCONNECTED = 'DISCONNECTED',
+  IDLE = "IDLE",
+  CONNECTING = "CONNECTING",
+  READY = "READY",
+  LECTURING = "LECTURING",
+  LISTENING = "LISTENING",
+  ENDED = "ENDED",
+  ERROR = "ERROR",
+  DISCONNECTED = "DISCONNECTED",
 }
 
 export interface TranscriptEntry {
-  speaker: 'user' | 'ai';
+  speaker: "user" | "ai";
   text: string;
   slideNumber?: number;
 }
 
-export type CanvasBlockType = 'markdown' | 'diagram' | 'ascii' | 'table';
+export type CanvasBlockType = "markdown" | "diagram" | "ascii" | "table";
 
 export interface CanvasBlock {
   type: CanvasBlockType;
