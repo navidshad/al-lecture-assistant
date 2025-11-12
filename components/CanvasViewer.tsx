@@ -5,7 +5,6 @@ import { fixMarkdownContent } from "../services/genaiClient";
 import { useToast } from "../hooks/useToast";
 import { useApiKey } from "../hooks/useApiKey";
 import { Loader2 } from "lucide-react";
-import Tooltip from "./Tooltip";
 
 const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
   const [contentBlocks, setContentBlocks] = useState<CanvasBlock[]>(content);
@@ -62,24 +61,27 @@ const CanvasViewer: React.FC<{ content: CanvasBlock[] }> = ({ content }) => {
 
   return (
     <div className="relative w-full h-full bg-black rounded-lg shadow-2xl flex flex-col border border-gray-700 overflow-hidden">
-      {/* Header with Fix button */}
-      <div className="w-full flex justify-end p-4 border-b border-gray-700 flex-shrink-0">
-        <Tooltip content="Use AI to fix malformed markdown, unclosed code fences, broken math syntax, or diagram formatting issues. The content will be refined and re-rendered automatically.">
-          <button
-            onClick={handleFixRendering}
-            disabled={isFixing || !apiKey}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium transition-colors"
-          >
-            {isFixing ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Fixing...</span>
-              </>
-            ) : (
-              <span>Fix rendering</span>
-            )}
-          </button>
-        </Tooltip>
+      {/* Header with note and Fix button */}
+      <div className="w-full flex justify-between items-center p-4 border-b border-gray-700 flex-shrink-0">
+        <div className="text-sm text-gray-400">
+          <span className="font-medium text-gray-300">Tip:</span> Use the Fix
+          button to repair malformed markdown, unclosed code fences, broken math
+          syntax, or diagram formatting issues.
+        </div>
+        <button
+          onClick={handleFixRendering}
+          disabled={isFixing || !apiKey}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium transition-colors flex-shrink-0"
+        >
+          {isFixing ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Fixing...</span>
+            </>
+          ) : (
+            <span>Fix rendering</span>
+          )}
+        </button>
       </div>
 
       {/* Content area */}
