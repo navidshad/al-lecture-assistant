@@ -374,7 +374,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
                 code({ node, inline, className, children, ...props }) {
                   const match = /language-(\w+)/.exec(className || "");
                   const language = match ? match[1] : "";
-                  const codeString = String(children).replace(/\n$/, "");
+                  const codeString = extractTextFromChildren(children).replace(
+                    /\n$/,
+                    ""
+                  );
 
                   if (language === "mermaid") {
                     return <Mermaid content={codeString} />;
