@@ -7,27 +7,17 @@ import {
   SetStateAction,
 } from "react";
 // FIX: Removed `LiveSession` as it is not an exported member of '@google/genai'.
-import {
-  GoogleGenAI,
-  LiveServerMessage,
-  Modality,
-  Blob as GenAI_Blob,
-  FunctionDeclaration,
-  Type,
-} from "@google/genai";
+import { GoogleGenAI, LiveServerMessage } from "@google/genai";
 import {
   Slide,
   LectureSessionState,
   TranscriptEntry,
   CanvasBlock,
-  ChatAttachment,
 } from "../types";
-import { encode, decode, decodeAudioData } from "../services/audioUtils";
 import { logger } from "../services/logger";
 import {
   normalizeCanvasBlocks,
   REANCHOR_EVERY_N_TURNS,
-  ENABLE_SERVER_INTERRUPT,
 } from "../services/geminiLiveUtils";
 import { buildSessionConfig } from "../services/geminiLiveConfig";
 import { useTranscriptManager } from "./useTranscriptManager";
@@ -35,11 +25,16 @@ import {
   buildSlideMemory,
   buildSlideAnchorText,
 } from "../services/slideMemory";
-import {
-  createSendMessage,
-  SendMessageOptions,
-} from "../services/geminiLiveMessaging";
+import { createSendMessage } from "../services/geminiLiveMessaging";
 import { useSessionState } from "./useSessionState";
+import {
+  initializeInputAudio,
+  initializeOutputAudio,
+  cleanupAudioResources,
+  flushAudioOutput,
+  handleAudioPlayback,
+  AudioRefs,
+} from "../services/geminiLiveAudio";
 
 const LOG_SOURCE = "useGeminiLive";
 
@@ -132,49 +127,23 @@ export const useGeminiLive = ({
     currentSlideIndexRef.current = currentSlideIndex;
   }, [currentSlideIndex]);
 
+  // Create audio refs object for audio management service
+  const audioRefs: AudioRefs = {
+    mediaStreamRef,
+    audioContextRef,
+    scriptProcessorRef,
+    mediaStreamSourceRef,
+    outputAudioContextRef,
+    nextStartTimeRef,
+    audioSourcesRef,
+    isMutedRef,
+    sessionOpenRef,
+    sessionPromiseRef,
+    aiMessageOpenRef,
+  };
+
   const cleanupConnectionResources = useCallback(() => {
-    logger.log(LOG_SOURCE, "Cleaning up connection resources.");
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-    if (scriptProcessorRef.current) {
-      scriptProcessorRef.current.disconnect();
-      scriptProcessorRef.current = null;
-    }
-    if (mediaStreamSourceRef.current) {
-      mediaStreamSourceRef.current.disconnect();
-      mediaStreamSourceRef.current = null;
-    }
-    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-      audioContextRef.current
-        .close()
-        .catch((e) =>
-          logger.warn(LOG_SOURCE, "Error closing input audio context", e)
-        );
-      audioContextRef.current = null;
-    }
-    if (
-      outputAudioContextRef.current &&
-      outputAudioContextRef.current.state !== "closed"
-    ) {
-      outputAudioContextRef.current
-        .close()
-        .catch((e) =>
-          logger.warn(LOG_SOURCE, "Error closing output audio context", e)
-        );
-      outputAudioContextRef.current = null;
-    }
-    if (sessionPromiseRef.current) {
-      logger.debug(LOG_SOURCE, "Closing previous session promise.");
-      sessionPromiseRef.current
-        .then((session) => session?.close())
-        .catch(() => {});
-      sessionPromiseRef.current = null;
-    }
-    audioSourcesRef.current.forEach((source) => source.stop());
-    audioSourcesRef.current.clear();
-    nextStartTimeRef.current = 0;
+    cleanupAudioResources(audioRefs);
   }, []);
 
   // FIX: Renamed disconnect to end to match what's being returned and used in LecturePage.
@@ -186,29 +155,8 @@ export const useGeminiLive = ({
   }, [cleanupConnectionResources]);
 
   const flushOutput = useCallback(() => {
-    // stop queued TTS locally
-    for (const source of audioSourcesRef.current.values()) {
-      try {
-        source.stop();
-      } catch {}
-    }
-    audioSourcesRef.current.clear();
-    nextStartTimeRef.current = 0;
-    // Treat as end of current AI message box
-    aiMessageOpenRef.current = false;
-    // Best-effort server-side interruption if supported (no-op otherwise)
-    if (
-      ENABLE_SERVER_INTERRUPT &&
-      sessionOpenRef.current &&
-      sessionPromiseRef.current
-    ) {
-      sessionPromiseRef.current.then((session) => {
-        try {
-          session.sendRealtimeInput?.({ event: "response.cancel" });
-        } catch {}
-      });
-    }
-  }, []);
+    flushAudioOutput(audioRefs, runWithOpenSession);
+  }, [runWithOpenSession]);
 
   // Use extracted transcript manager
   const { addTranscriptEntry } = useTranscriptManager({
@@ -306,8 +254,8 @@ export const useGeminiLive = ({
       const thisConnectSeq = ++connectSeqRef.current;
 
       const ai = new GoogleGenAI({ apiKey: apiKey ?? process.env.API_KEY! });
-      outputAudioContextRef.current = new (window.AudioContext ||
-        (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      // Initialize output audio context
+      initializeOutputAudio(outputAudioContextRef);
 
       // Determine reconnection type: if not provided, infer from transcript
       const isReconnect = transcript.length > 0;
@@ -337,71 +285,8 @@ export const useGeminiLive = ({
             logger.log(LOG_SOURCE, "Session opened successfully.");
             sessionOpenRef.current = true;
             try {
-              audioContextRef.current = new (window.AudioContext ||
-                (window as any).webkitAudioContext)({ sampleRate: 16000 });
-              const stream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
-              });
-              // It's possible the session was closed while awaiting getUserMedia.
-              if (!sessionOpenRef.current) {
-                try {
-                  stream.getTracks().forEach((t) => t.stop());
-                } catch {}
-                logger.warn(
-                  LOG_SOURCE,
-                  "getUserMedia resolved after session closed. Aborting audio init."
-                );
-                return;
-              }
-              mediaStreamRef.current = stream;
-              logger.debug(LOG_SOURCE, "Microphone stream acquired.");
-
-              const ctx = audioContextRef.current;
-              if (!ctx) {
-                // Audio context may have been closed by cleanup during a race.
-                try {
-                  stream.getTracks().forEach((t) => t.stop());
-                } catch {}
-                logger.warn(
-                  LOG_SOURCE,
-                  "AudioContext missing during onopen. Aborting audio init."
-                );
-                return;
-              }
-
-              const source = ctx.createMediaStreamSource(stream);
-              mediaStreamSourceRef.current = source;
-
-              const scriptProcessor = ctx.createScriptProcessor(4096, 1, 1);
-              scriptProcessorRef.current = scriptProcessor;
-
-              scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-                // Do not attempt to stream audio if muted or session is not open
-                if (isMutedRef.current || !sessionOpenRef.current) return;
-                const inputData =
-                  audioProcessingEvent.inputBuffer.getChannelData(0);
-
-                const bufferLength = inputData.length;
-                const pcm16 = new Int16Array(bufferLength);
-                for (let i = 0; i < bufferLength; i++) {
-                  pcm16[i] = inputData[i] * 32768;
-                }
-
-                const pcmBlob: GenAI_Blob = {
-                  data: encode(new Uint8Array(pcm16.buffer)),
-                  mimeType: "audio/pcm;rate=16000",
-                };
-
-                runWithOpenSession((session) => {
-                  session.sendRealtimeInput({ media: pcmBlob });
-                });
-              };
-
-              const gainNode = audioContextRef.current.createGain();
-              gainNode.gain.value = 0;
-              source.connect(scriptProcessor);
-              scriptProcessor.connect(gainNode);
-              gainNode.connect(audioContextRef.current.destination);
+              // Initialize input audio (microphone stream and processing)
+              await initializeInputAudio(audioRefs, runWithOpenSession);
 
               setSessionState(LectureSessionState.READY);
 
@@ -714,29 +599,11 @@ export const useGeminiLive = ({
               });
             }
 
+            // Handle audio playback from server
             const audioData =
               message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (audioData && outputAudioContextRef.current) {
-              const outputCtx = outputAudioContextRef.current;
-              nextStartTimeRef.current = Math.max(
-                nextStartTimeRef.current,
-                outputCtx.currentTime
-              );
-              const audioBuffer = await decodeAudioData(
-                decode(audioData),
-                outputCtx,
-                24000,
-                1
-              );
-              const source = outputCtx.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(outputCtx.destination);
-              source.addEventListener("ended", () => {
-                audioSourcesRef.current.delete(source);
-              });
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
-              audioSourcesRef.current.add(source);
+            if (audioData) {
+              await handleAudioPlayback(audioData, audioRefs);
             }
 
             if (message.serverContent?.generationComplete) {
@@ -764,13 +631,8 @@ export const useGeminiLive = ({
                 LOG_SOURCE,
                 "AI speech was interrupted. Clearing audio queue."
               );
-              for (const source of audioSourcesRef.current.values()) {
-                source.stop();
-              }
-              audioSourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
-              // Treat interruption as end of current message box
-              aiMessageOpenRef.current = false;
+              // Flush audio output on interruption
+              flushAudioOutput(audioRefs, runWithOpenSession);
             }
           },
           onerror: (e: ErrorEvent) => {
@@ -858,12 +720,12 @@ export const useGeminiLive = ({
     onSlideChange(slideNumber);
     // Send slide image/canvas and anchor in a single coherent turn
     const slide = slides[nextIndex];
-    const anchor = buildSlideAnchorText(slide, transcript);
+    const anchor = buildSlideAnchorTextLocal(slide, transcript);
     sendMessage({ slide, text: anchor, turnComplete: true });
   }, [
     sendMessage,
     flushOutput,
-    buildSlideAnchorText,
+    buildSlideAnchorTextLocal,
     slides,
     transcript,
     onSlideChange,
@@ -886,12 +748,12 @@ export const useGeminiLive = ({
     onSlideChange(slideNumber);
     // Send slide image/canvas and anchor in a single coherent turn
     const slide = slides[prevIndex];
-    const anchor = buildSlideAnchorText(slide, transcript);
+    const anchor = buildSlideAnchorTextLocal(slide, transcript);
     sendMessage({ slide, text: anchor, turnComplete: true });
   }, [
     sendMessage,
     flushOutput,
-    buildSlideAnchorText,
+    buildSlideAnchorTextLocal,
     slides,
     transcript,
     onSlideChange,
