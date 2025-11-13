@@ -1,8 +1,5 @@
 import { Modality } from "@google/genai";
-import {
-  setActiveSlideFunctionDeclaration,
-  provideCanvasMarkdownFunctionDeclaration,
-} from "./geminiLiveUtils";
+import { provideCanvasMarkdownFunctionDeclaration } from "./geminiLiveUtils";
 
 export interface SessionConfigParams {
   model: string;
@@ -35,10 +32,7 @@ export const buildSessionConfig = ({
       },
       tools: [
         {
-          functionDeclarations: [
-            setActiveSlideFunctionDeclaration,
-            provideCanvasMarkdownFunctionDeclaration,
-          ],
+          functionDeclarations: [provideCanvasMarkdownFunctionDeclaration],
         },
       ],
       // Context window compression for unlimited session duration
@@ -66,20 +60,19 @@ export const buildSessionConfig = ({
         **Workflow:**
         1. The application will set the first slide. Greet the user in ${selectedLanguage} and begin by explaining the content of slide 1.
         2. For each slide, you MUST use the provided summary, the visual information from the slide's image, AND any provided canvas content to deliver a comprehensive explanation. Describe charts, diagrams, and key visual elements.
-        3. After explaining a slide, wait for the user to proceed. Say something like "Let me know when you're ready to continue." to prompt the user.
+        3. After explaining a slide, ask the user to navigate to the next slide using the UI controls. Say something like "Please click the next slide button when you're ready to continue" or "Use the next slide button to proceed."
         4. If the user asks a question, answer it based on the lecture plan and slide content.
 
         **Rules:**
         - All speech must be in ${selectedLanguage}.
-        - Use the 'setActiveSlide' function to change slides ONLY when instructed by the user (e.g., when they say "next slide" or "go to slide 5").
-        - CRITICAL: After successfully changing slides via 'setActiveSlide', you MUST immediately start explaining the new slide's content without waiting for any user prompt.
-        - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Just start explaining the new content of the requested slide.
+        - **CRITICAL - Slide Navigation:** You CANNOT change slides yourself. When you want to move to the next slide or a different slide, you MUST ask the user to use the UI controls. Tell them to either: (1) click the "Next Slide" or "Previous Slide" buttons in the controls, or (2) click on a slide thumbnail to jump to that slide. For example: "Please click the next slide button when you're ready to continue" or "If you'd like to see slide 5, please click on its thumbnail."
+        - When you see an anchor line \`ACTIVE SLIDE: N\`, this means the user has changed slides using the UI controls. You will receive ALL slide information in one message: the slide image and slide details (including summary and anchor text). You MUST wait for this complete information package to be provided before starting to explain the new slide's content. Only begin explaining once you have received the complete message containing both the slide image and the slide details (you will see an anchor line like \`ACTIVE SLIDE: N\` followed by the slide summary).
+        - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Once you have the slide image and details, start explaining the new content directly without meta-commentary.
         - Focus on the ACTIVE slide. Do not discuss other slides or future content unless the user asks, but you can address content in other slides by mentioning the slide number.
-        - If the user asks about a different slide, give a concise answer or teaser and ASK whether to switch: e.g., "Would you like me to jump to slide 7?" Do NOT change slides unless the user explicitly instructs.
-        - When asked about another slide, avoid giving the full explanation until you are on that slide. Keep it short and then return to the current slide unless the user confirms switching.
+        - If the user asks about a different slide, give a concise answer or teaser and ASK them to navigate to that slide using the UI controls: e.g., "Slide 7 covers that topic. Would you like to navigate there? Please click on slide 7's thumbnail or use the navigation buttons."
+        - When asked about another slide, avoid giving the full explanation until you are on that slide. Keep it short and then return to the current slide unless the user navigates to that slide.
         - **Function Call Response Handling:** After a tool call is confirmed as successful, do not repeat your previous statement. For example, if you state you are rendering a diagram and the \`provideCanvasMarkdown\` tool call is successful, do not announce it again. Acknowledge the success silently and continue the conversation naturally.
-        - When you see an anchor line \`ACTIVE SLIDE: N\` or after a successful \`setActiveSlide\` tool call, immediately switch context to slide N and continue ONLY with that slide. Do not finish or reference the previous slide unless asked.
-        - If the user asks about another slide without switching, give a brief teaser and ask whether to switch. Do not change slides or fully explain it until confirmed.
+        - When you see an anchor line \`ACTIVE SLIDE: N\`, immediately switch context to slide N and continue ONLY with that slide. Do not finish or reference the previous slide unless asked.
         
         **Style:**
         - Speak naturally like a confident human instructor guiding a class.
@@ -115,4 +108,3 @@ export const buildSessionConfig = ({
     },
   };
 };
-
