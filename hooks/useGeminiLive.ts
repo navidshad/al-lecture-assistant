@@ -35,6 +35,11 @@ import {
   handleAudioPlayback,
   AudioRefs,
 } from "../services/geminiLiveAudio";
+import {
+  storeResumptionHandle,
+  getResumptionHandle,
+  clearResumptionHandle,
+} from "../services/sessionResumption";
 
 const LOG_SOURCE = "useGeminiLive";
 
@@ -96,6 +101,11 @@ export const useGeminiLive = ({
   const slideChangeSeqRef = useRef(0);
   // Counter for periodic re-anchoring during long conversations
   const turnCounterRef = useRef(0);
+  // Session resumption tracking
+  const userEndedSessionRef = useRef(false);
+  const reconnectionAttemptsRef = useRef(0);
+  const isReconnectingRef = useRef(false);
+  const MAX_RECONNECTION_ATTEMPTS = 3;
   // Helper: safely run logic with a live session without throwing on closed socket
   const runWithOpenSession = useCallback((runner: (session: any) => void) => {
     if (!sessionOpenRef.current || !sessionPromiseRef.current) {
@@ -149,7 +159,14 @@ export const useGeminiLive = ({
   // FIX: Renamed disconnect to end to match what's being returned and used in LecturePage.
   const end = useCallback(() => {
     logger.log(LOG_SOURCE, "end() called. Performing full cleanup.");
+    // Mark session as explicitly ended by user
+    userEndedSessionRef.current = true;
     sessionOpenRef.current = false;
+    // Clear resumption handle since user explicitly ended
+    clearResumptionHandle();
+    // Reset reconnection attempts
+    reconnectionAttemptsRef.current = 0;
+    isReconnectingRef.current = false;
     cleanupConnectionResources();
     setSessionState(LectureSessionState.ENDED);
   }, [cleanupConnectionResources]);
@@ -230,6 +247,11 @@ export const useGeminiLive = ({
     [flushOutput, buildSlideAnchorTextLocal, sendMessage, transcript]
   );
 
+  // Store startLecture in a ref to avoid stale closures in setTimeout callbacks
+  const startLectureRef = useRef<
+    ((reconnectionType?: "disconnected" | "saved" | "new") => void) | null
+  >(null);
+
   const startLecture = useCallback(
     (reconnectionType?: "disconnected" | "saved" | "new") => {
       logger.log(
@@ -250,6 +272,12 @@ export const useGeminiLive = ({
       setSessionState(LectureSessionState.CONNECTING);
       setError(null);
 
+      // Reset user-ended flag for new sessions (allows automatic reconnection for disconnected sessions)
+      // Don't reset if user explicitly ended - that flag persists
+      if (reconnectionType === "new") {
+        userEndedSessionRef.current = false;
+      }
+
       // Bump sequence to tag this connection as the latest one
       const thisConnectSeq = ++connectSeqRef.current;
 
@@ -261,6 +289,9 @@ export const useGeminiLive = ({
       const isReconnect = transcript.length > 0;
       const reconnectType = reconnectionType || (isReconnect ? "saved" : "new");
 
+      // Retrieve resumption handle if available (for automatic reconnection)
+      const resumptionHandle = getResumptionHandle();
+
       // Build session config using extracted builder
       const sessionConfig = buildSessionConfig({
         model: selectedModel,
@@ -268,9 +299,14 @@ export const useGeminiLive = ({
         selectedLanguage,
         generalInfo,
         userCustomPrompt,
-        // TODO: Add resumptionHandle when session resumption is implemented
-        resumptionHandle: null,
+        resumptionHandle: resumptionHandle,
       });
+
+      // Reset user-ended flag when starting a new connection
+      // (unless this is an explicit user end, which is handled in end())
+      if (!userEndedSessionRef.current) {
+        isReconnectingRef.current = reconnectType === "disconnected";
+      }
 
       logger.debug(LOG_SOURCE, "Connecting to Gemini Live...");
 
@@ -284,6 +320,9 @@ export const useGeminiLive = ({
             }
             logger.log(LOG_SOURCE, "Session opened successfully.");
             sessionOpenRef.current = true;
+            // Reset reconnection attempts on successful connection
+            reconnectionAttemptsRef.current = 0;
+            isReconnectingRef.current = false;
             try {
               // Initialize input audio (microphone stream and processing)
               await initializeInputAudio(audioRefs, runWithOpenSession);
@@ -432,6 +471,48 @@ export const useGeminiLive = ({
             if (thisConnectSeq !== connectSeqRef.current) {
               return;
             }
+
+            // Handle session resumption updates
+            if ((message as any).sessionResumptionUpdate) {
+              const update = (message as any).sessionResumptionUpdate;
+              if (update.resumable && update.newHandle) {
+                storeResumptionHandle(update.newHandle);
+                logger.log(
+                  LOG_SOURCE,
+                  "Received new resumption handle, stored for future reconnection"
+                );
+                // Reset reconnection attempts on successful resumption update
+                reconnectionAttemptsRef.current = 0;
+                isReconnectingRef.current = false;
+              }
+            }
+
+            // Handle GoAway messages (connection will terminate soon)
+            if ((message as any).goAway) {
+              const goAway = (message as any).goAway;
+              const timeLeft = goAway.timeLeft;
+              logger.warn(
+                LOG_SOURCE,
+                `Connection will terminate in ${timeLeft} seconds`
+              );
+
+              // Proactive reconnection: start reconnecting before connection terminates
+              if (!userEndedSessionRef.current && !isReconnectingRef.current) {
+                logger.log(
+                  LOG_SOURCE,
+                  "Starting proactive reconnection before connection terminates"
+                );
+                isReconnectingRef.current = true;
+                setError("Reconnecting to maintain session...");
+                // Small delay to let current message processing complete
+                setTimeout(() => {
+                  if (!userEndedSessionRef.current && startLectureRef.current) {
+                    startLectureRef.current("disconnected");
+                  }
+                }, 1000);
+              }
+            }
+
             if (message.serverContent) {
               setSessionState(LectureSessionState.LECTURING);
             }
@@ -642,9 +723,49 @@ export const useGeminiLive = ({
             }
             logger.error(LOG_SOURCE, "Session error event received.", e);
             sessionOpenRef.current = false;
-            setError("A connection error occurred. Please try to reconnect.");
-            cleanupConnectionResources();
-            setSessionState(LectureSessionState.DISCONNECTED);
+
+            // If user explicitly ended session, don't attempt reconnection
+            if (userEndedSessionRef.current) {
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.ENDED);
+              return;
+            }
+
+            // Attempt automatic reconnection unless max attempts reached
+            if (
+              reconnectionAttemptsRef.current < MAX_RECONNECTION_ATTEMPTS &&
+              !isReconnectingRef.current
+            ) {
+              reconnectionAttemptsRef.current += 1;
+              isReconnectingRef.current = true;
+              const delay = Math.min(
+                1000 * Math.pow(2, reconnectionAttemptsRef.current - 1),
+                5000
+              ); // Exponential backoff, max 5s
+              logger.log(
+                LOG_SOURCE,
+                `Attempting automatic reconnection (attempt ${reconnectionAttemptsRef.current}/${MAX_RECONNECTION_ATTEMPTS}) after ${delay}ms`
+              );
+              setError(
+                `Reconnecting... (attempt ${reconnectionAttemptsRef.current}/${MAX_RECONNECTION_ATTEMPTS})`
+              );
+              cleanupConnectionResources();
+              setTimeout(() => {
+                if (!userEndedSessionRef.current && startLectureRef.current) {
+                  startLectureRef.current("disconnected");
+                }
+              }, delay);
+            } else {
+              // Max attempts reached or already reconnecting
+              setError(
+                reconnectionAttemptsRef.current >= MAX_RECONNECTION_ATTEMPTS
+                  ? "Connection failed after multiple attempts. Please try reconnecting manually."
+                  : "A connection error occurred. Please try to reconnect."
+              );
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.DISCONNECTED);
+              isReconnectingRef.current = false;
+            }
           },
           onclose: (e: CloseEvent) => {
             // Ignore closes from older connections (e.g., cleanup of previous session)
@@ -660,15 +781,52 @@ export const useGeminiLive = ({
               "wasClean:",
               e.wasClean
             );
-            // Regardless of clean/unclean close, stop streaming and require reconnect
             sessionOpenRef.current = false;
-            if (!e.wasClean) {
-              setError(
-                "The connection was lost unexpectedly. Please reconnect."
-              );
+
+            // If user explicitly ended session, don't attempt reconnection
+            if (userEndedSessionRef.current) {
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.ENDED);
+              return;
             }
-            cleanupConnectionResources();
-            setSessionState(LectureSessionState.DISCONNECTED);
+
+            // Attempt automatic reconnection unless max attempts reached
+            if (
+              reconnectionAttemptsRef.current < MAX_RECONNECTION_ATTEMPTS &&
+              !isReconnectingRef.current
+            ) {
+              reconnectionAttemptsRef.current += 1;
+              isReconnectingRef.current = true;
+              const delay = Math.min(
+                1000 * Math.pow(2, reconnectionAttemptsRef.current - 1),
+                5000
+              ); // Exponential backoff, max 5s
+              logger.log(
+                LOG_SOURCE,
+                `Connection closed. Attempting automatic reconnection (attempt ${reconnectionAttemptsRef.current}/${MAX_RECONNECTION_ATTEMPTS}) after ${delay}ms`
+              );
+              setError(
+                `Reconnecting... (attempt ${reconnectionAttemptsRef.current}/${MAX_RECONNECTION_ATTEMPTS})`
+              );
+              cleanupConnectionResources();
+              setTimeout(() => {
+                if (!userEndedSessionRef.current && startLectureRef.current) {
+                  startLectureRef.current("disconnected");
+                }
+              }, delay);
+            } else {
+              // Max attempts reached or already reconnecting
+              setError(
+                reconnectionAttemptsRef.current >= MAX_RECONNECTION_ATTEMPTS
+                  ? "Connection lost after multiple reconnection attempts. Please try reconnecting manually."
+                  : e.wasClean
+                  ? "Connection closed."
+                  : "The connection was lost unexpectedly. Please reconnect."
+              );
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.DISCONNECTED);
+              isReconnectingRef.current = false;
+            }
           },
         },
       });
@@ -694,6 +852,9 @@ export const useGeminiLive = ({
       addTranscriptEntry,
     ]
   );
+
+  // Update ref with latest startLecture function
+  startLectureRef.current = startLecture;
 
   const replay = useCallback(() => {
     logger.debug(LOG_SOURCE, "replay() called.");
