@@ -1164,27 +1164,89 @@ export const useGeminiLive = ({
   }, [sendMessage]);
   const next = useCallback(() => {
     logger.debug(LOG_SOURCE, "next() called.");
-    sendMessage({
-      text: "Go to the next slide and explain it.",
-      turnComplete: true,
-    });
-  }, [sendMessage]);
+    const nextIndex = currentSlideIndexRef.current + 1;
+    if (nextIndex >= slides.length) {
+      logger.warn(
+        LOG_SOURCE,
+        "next() called but already on last slide. Ignoring."
+      );
+      return;
+    }
+    const slideNumber = nextIndex + 1;
+    // Update the slide index ref immediately
+    currentSlideIndexRef.current = nextIndex;
+    // Interrupt any ongoing output before changing context
+    flushOutput();
+    onSlideChange(slideNumber);
+    // Send slide image/canvas and anchor in a single coherent turn
+    const slide = slides[nextIndex];
+    const anchor = buildSlideAnchorText(slide, transcript);
+    sendMessage({ slide, text: anchor, turnComplete: true });
+  }, [
+    sendMessage,
+    flushOutput,
+    buildSlideAnchorText,
+    slides,
+    transcript,
+    onSlideChange,
+  ]);
   const previous = useCallback(() => {
     logger.debug(LOG_SOURCE, "previous() called.");
-    sendMessage({
-      text: "Go to the previous slide and explain it.",
-      turnComplete: true,
-    });
-  }, [sendMessage]);
+    const prevIndex = currentSlideIndexRef.current - 1;
+    if (prevIndex < 0) {
+      logger.warn(
+        LOG_SOURCE,
+        "previous() called but already on first slide. Ignoring."
+      );
+      return;
+    }
+    const slideNumber = prevIndex + 1;
+    // Update the slide index ref immediately
+    currentSlideIndexRef.current = prevIndex;
+    // Interrupt any ongoing output before changing context
+    flushOutput();
+    onSlideChange(slideNumber);
+    // Send slide image/canvas and anchor in a single coherent turn
+    const slide = slides[prevIndex];
+    const anchor = buildSlideAnchorText(slide, transcript);
+    sendMessage({ slide, text: anchor, turnComplete: true });
+  }, [
+    sendMessage,
+    flushOutput,
+    buildSlideAnchorText,
+    slides,
+    transcript,
+    onSlideChange,
+  ]);
   const goToSlide = useCallback(
     (slideNumber: number) => {
       logger.debug(LOG_SOURCE, `goToSlide(${slideNumber}) called.`);
-      sendMessage({
-        text: `Go to slide number ${slideNumber} and explain it.`,
-        turnComplete: true,
-      });
+      if (slideNumber < 1 || slideNumber > slides.length) {
+        logger.warn(
+          LOG_SOURCE,
+          `goToSlide() called with invalid slide number: ${slideNumber}. Valid range: 1-${slides.length}. Ignoring.`
+        );
+        return;
+      }
+      const targetIndex = slideNumber - 1;
+      // Update the slide index ref immediately
+      currentSlideIndexRef.current = targetIndex;
+      // Interrupt any ongoing output before changing context
+      flushOutput();
+      onSlideChange(slideNumber);
+      // Send slide image/canvas and anchor in a single coherent turn
+      const slide = slides[targetIndex];
+      const anchor = buildSlideAnchorText(slide, transcript);
+      sendMessage({ slide, text: anchor, turnComplete: true });
     },
-    [sendMessage]
+    [
+      sendMessage,
+      flushOutput,
+      buildSlideAnchorText,
+      slides,
+      transcript,
+      onSlideChange,
+    ]
   );
 
   useEffect(() => {
