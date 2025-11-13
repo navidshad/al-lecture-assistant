@@ -27,9 +27,11 @@ const Toolbox: React.FC<ToolboxProps> = ({
   };
 
   return (
-    <div className="hidden md:flex items-center gap-2 p-1.5 bg-gray-800/80 backdrop-blur-sm border-b border-gray-700">
-      <span className="text-xs font-medium text-gray-400 px-1.5">Draw Tools</span>
-      <Tooltip content="Rectangle selection tool">
+    <div className="hidden md:flex items-center gap-2 p-1.5">
+      <Tooltip content="Select and capture portions of slides or canvas content to attach to your messages">
+        <span className="text-xs font-medium text-gray-400 px-1.5 cursor-help">Draw Tools</span>
+      </Tooltip>
+      <Tooltip content="Rectangle selection tool - Click to enable, then drag on slide or canvas to select an area">
         <button
           onClick={handleRectangleToolClick}
           className={`flex items-center justify-center p-1.5 rounded transition-colors ${

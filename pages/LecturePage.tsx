@@ -19,6 +19,7 @@ import { Power, PlayCircle } from "lucide-react";
 import { logger } from "../services/logger";
 import TopBar from "../components/Lecture/TopBar";
 import TabNav from "../components/Lecture/TabNav";
+import Toolbox from "../components/Lecture/Toolbox";
 import SlidesThumbStrip from "../components/Lecture/SlidesThumbStrip";
 import { useSessionPersistence } from "../hooks/useSessionPersistence";
 import GroupedSlidesThumbStrip from "../components/Lecture/GroupedSlidesThumbStrip";
@@ -569,8 +570,15 @@ const LecturePage: React.FC<LecturePageProps> = ({
         <div className="flex-1 flex flex-col relative overflow-hidden">
           <main className="flex-1 flex flex-col p-4 md:p-8 overflow-hidden">
             <div className="flex-1 min-h-0 flex flex-col">
-              {/* Tab buttons */}
-              <TabNav activeTab={activeTab} onChange={setActiveTab} />
+              {/* Tab buttons and Toolbox */}
+              <div className="relative flex items-center justify-between border-b border-gray-700 z-10">
+                <TabNav activeTab={activeTab} onChange={setActiveTab} />
+                <Toolbox
+                  isRectangleToolActive={isRectangleToolActive}
+                  onRectangleToolToggle={handleRectangleToolToggle}
+                  onToolActivate={handleToolActivate}
+                />
+              </div>
 
               {/* Tab content */}
               <div className="flex-1 min-h-0 pt-4">
@@ -585,10 +593,8 @@ const LecturePage: React.FC<LecturePageProps> = ({
                     error={error}
                     onReconnect={handleReconnect}
                     isRectangleToolActive={isRectangleToolActive}
-                    onRectangleToolToggle={handleRectangleToolToggle}
                     onSelectionAdd={handleSelectionAdd}
                     onRectangleToolDeactivate={handleRectangleToolDeactivate}
-                    onToolActivate={handleToolActivate}
                   />
                   {hoverPreviewIndex != null &&
                     hoverPreviewIndex !== currentSlideIndex &&

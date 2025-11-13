@@ -11,7 +11,7 @@ const TabNav: React.FC<{ activeTab: TabName; onChange: (tab: TabName) => void; }
     }`;
 
   return (
-    <div className="flex-shrink-0 border-b border-gray-700">
+    <div className="flex-shrink-0">
       <nav className="-mb-px flex space-x-2" aria-label="Tabs">
         <button onClick={() => onChange('slide')} className={tabButtonClasses('slide')}>
           Slide
