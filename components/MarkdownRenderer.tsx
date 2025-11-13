@@ -74,7 +74,9 @@ const renderTextWithInlineMath = (text: string): React.ReactNode[] => {
 
     // Add math
     parts.push(
-      <InlineMath key={key++} math={mathMatch.content} errorColor="#cc0000" />
+      <span key={key++} dir="ltr">
+        <InlineMath math={mathMatch.content} errorColor="#cc0000" />
+      </span>
     );
 
     lastIndex = mathMatch.index + mathMatch.length;
@@ -211,7 +213,11 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
       {segments.map((segment, index) => {
         if (segment.type === "math-block") {
           return (
-            <div key={index} className="my-4 overflow-x-auto katex-block">
+            <div
+              key={index}
+              className="my-4 overflow-x-auto katex-block"
+              dir="ltr"
+            >
               <BlockMath math={segment.content} errorColor="#cc0000" />
             </div>
           );
@@ -380,6 +386,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
                         className={`${
                           className || ""
                         } bg-gray-900 px-1 py-0.5 rounded-sm text-sm font-mono text-gray-200`}
+                        dir="ltr"
                         {...props}
                       >
                         {children}
@@ -392,6 +399,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
                       className={`${
                         className || ""
                       } bg-gray-900 px-1 py-0.5 rounded-sm text-sm font-mono text-gray-200`}
+                      dir="ltr"
                       {...props}
                     >
                       {children}
@@ -402,6 +410,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
                   return (
                     <pre
                       className="bg-gray-900 p-4 rounded-md overflow-x-auto text-sm my-3"
+                      dir="ltr"
                       {...props}
                     >
                       {children}
