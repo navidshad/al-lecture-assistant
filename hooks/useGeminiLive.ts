@@ -7,64 +7,41 @@ import {
   SetStateAction,
 } from "react";
 // FIX: Removed `LiveSession` as it is not an exported member of '@google/genai'.
-import {
-  GoogleGenAI,
-  LiveServerMessage,
-  Modality,
-  Blob as GenAI_Blob,
-  FunctionDeclaration,
-  Type,
-} from "@google/genai";
+import { GoogleGenAI, LiveServerMessage } from "@google/genai";
 import {
   Slide,
   LectureSessionState,
   TranscriptEntry,
   CanvasBlock,
-  ChatAttachment,
 } from "../types";
-import { encode, decode, decodeAudioData } from "../services/audioUtils";
 import { logger } from "../services/logger";
+import {
+  normalizeCanvasBlocks,
+  REANCHOR_EVERY_N_TURNS,
+} from "../services/geminiLiveUtils";
+import { buildSessionConfig } from "../services/geminiLiveConfig";
+import { useTranscriptManager } from "./useTranscriptManager";
+import {
+  buildSlideMemory,
+  buildSlideAnchorText,
+} from "../services/slideMemory";
+import { createSendMessage } from "../services/geminiLiveMessaging";
+import { useSessionState } from "./useSessionState";
+import {
+  initializeInputAudio,
+  initializeOutputAudio,
+  cleanupAudioResources,
+  flushAudioOutput,
+  handleAudioPlayback,
+  AudioRefs,
+} from "../services/geminiLiveAudio";
+import {
+  storeResumptionHandle,
+  getResumptionHandle,
+  clearResumptionHandle,
+} from "../services/sessionResumption";
 
 const LOG_SOURCE = "useGeminiLive";
-
-const normalizeCanvasBlocks = (input: any): CanvasBlock[] => {
-  // Markdown-only normalization
-  const coerceToMarkdown = (item: any): CanvasBlock | null => {
-    if (item == null) return null;
-    if (typeof item === "string") {
-      return { type: "markdown", content: item };
-    }
-    if (typeof item === "object") {
-      const possibleContent =
-        typeof item.content === "string"
-          ? item.content
-          : JSON.stringify(item, null, 2);
-      return { type: "markdown", content: possibleContent };
-    }
-    return { type: "markdown", content: String(item) };
-  };
-
-  if (
-    input &&
-    !Array.isArray(input) &&
-    (typeof input === "object" || typeof input === "string")
-  ) {
-    const coerced = coerceToMarkdown(input);
-    return coerced ? [coerced] : [];
-  }
-
-  if (Array.isArray(input)) {
-    return (input.map(coerceToMarkdown).filter(Boolean) as CanvasBlock[]) || [];
-  }
-
-  return [
-    {
-      type: "markdown",
-      content:
-        typeof input === "string" ? input : JSON.stringify(input, null, 2),
-    },
-  ];
-};
 
 interface UseGeminiLiveProps {
   slides: Slide[];
@@ -85,40 +62,6 @@ interface UseGeminiLiveProps {
   currentSlideIndex: number;
 }
 
-const setActiveSlideFunctionDeclaration: FunctionDeclaration = {
-  name: "setActiveSlide",
-  description:
-    "Sets the active presentation slide to the specified slide number. Use this function to navigate the presentation.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      slideNumber: {
-        type: Type.NUMBER,
-        description:
-          "The number of the slide to display. Note: Slide numbers are 1-based.",
-      },
-    },
-    required: ["slideNumber"],
-  },
-};
-
-const provideCanvasMarkdownFunctionDeclaration: FunctionDeclaration = {
-  name: "provideCanvasMarkdown",
-  description:
-    "Render markdown content on the canvas. Supports GFM, KaTeX math ($ and $$), Mermaid diagrams (```mermaid), emojis, code highlighting, tables, and all standard markdown features.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      markdown: {
-        type: Type.STRING,
-        description:
-          "Raw markdown string containing text, math, diagrams, emojis, etc. Use $...$ for inline math, $$...$$ for block math, and ```mermaid ... ``` for Mermaid diagrams.",
-      },
-    },
-    required: ["markdown"],
-  },
-};
-
 export const useGeminiLive = ({
   slides,
   generalInfo,
@@ -134,10 +77,8 @@ export const useGeminiLive = ({
   apiKey,
   currentSlideIndex,
 }: UseGeminiLiveProps) => {
-  const [sessionState, _setSessionState] = useState<LectureSessionState>(
-    LectureSessionState.IDLE
-  );
-  const [error, setError] = useState<string | null>(null);
+  // Use extracted session state manager
+  const { sessionState, setSessionState, error, setError } = useSessionState();
 
   // FIX: Replaced `Promise<LiveSession>` with `Promise<any>` as `LiveSession` is not exported.
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
@@ -160,8 +101,11 @@ export const useGeminiLive = ({
   const slideChangeSeqRef = useRef(0);
   // Counter for periodic re-anchoring during long conversations
   const turnCounterRef = useRef(0);
-  // Tunables
-  const REANCHOR_EVERY_N_TURNS = 6; // set 0 to disable
+  // Session resumption tracking
+  const userEndedSessionRef = useRef(false);
+  const reconnectionAttemptsRef = useRef(0);
+  const isReconnectingRef = useRef(false);
+  const MAX_RECONNECTION_ATTEMPTS = 3;
   // Helper: safely run logic with a live session without throwing on closed socket
   const runWithOpenSession = useCallback((runner: (session: any) => void) => {
     if (!sessionOpenRef.current || !sessionPromiseRef.current) {
@@ -185,18 +129,6 @@ export const useGeminiLive = ({
       });
   }, []);
 
-  const setSessionState = (newState: LectureSessionState) => {
-    _setSessionState((prevState) => {
-      if (prevState !== newState) {
-        logger.debug(
-          LOG_SOURCE,
-          `Session state changing from ${prevState} to ${newState}`
-        );
-      }
-      return newState;
-    });
-  };
-
   useEffect(() => {
     isMutedRef.current = isMuted;
   }, [isMuted]);
@@ -205,280 +137,72 @@ export const useGeminiLive = ({
     currentSlideIndexRef.current = currentSlideIndex;
   }, [currentSlideIndex]);
 
+  // Create audio refs object for audio management service
+  const audioRefs: AudioRefs = {
+    mediaStreamRef,
+    audioContextRef,
+    scriptProcessorRef,
+    mediaStreamSourceRef,
+    outputAudioContextRef,
+    nextStartTimeRef,
+    audioSourcesRef,
+    isMutedRef,
+    sessionOpenRef,
+    sessionPromiseRef,
+    aiMessageOpenRef,
+  };
+
   const cleanupConnectionResources = useCallback(() => {
-    logger.log(LOG_SOURCE, "Cleaning up connection resources.");
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-    if (scriptProcessorRef.current) {
-      scriptProcessorRef.current.disconnect();
-      scriptProcessorRef.current = null;
-    }
-    if (mediaStreamSourceRef.current) {
-      mediaStreamSourceRef.current.disconnect();
-      mediaStreamSourceRef.current = null;
-    }
-    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-      audioContextRef.current
-        .close()
-        .catch((e) =>
-          logger.warn(LOG_SOURCE, "Error closing input audio context", e)
-        );
-      audioContextRef.current = null;
-    }
-    if (
-      outputAudioContextRef.current &&
-      outputAudioContextRef.current.state !== "closed"
-    ) {
-      outputAudioContextRef.current
-        .close()
-        .catch((e) =>
-          logger.warn(LOG_SOURCE, "Error closing output audio context", e)
-        );
-      outputAudioContextRef.current = null;
-    }
-    if (sessionPromiseRef.current) {
-      logger.debug(LOG_SOURCE, "Closing previous session promise.");
-      sessionPromiseRef.current
-        .then((session) => session?.close())
-        .catch(() => {});
-      sessionPromiseRef.current = null;
-    }
-    audioSourcesRef.current.forEach((source) => source.stop());
-    audioSourcesRef.current.clear();
-    nextStartTimeRef.current = 0;
+    cleanupAudioResources(audioRefs);
   }, []);
 
   // FIX: Renamed disconnect to end to match what's being returned and used in LecturePage.
   const end = useCallback(() => {
     logger.log(LOG_SOURCE, "end() called. Performing full cleanup.");
+    // Mark session as explicitly ended by user
+    userEndedSessionRef.current = true;
     sessionOpenRef.current = false;
+    // Clear resumption handle since user explicitly ended
+    clearResumptionHandle();
+    // Reset reconnection attempts
+    reconnectionAttemptsRef.current = 0;
+    isReconnectingRef.current = false;
     cleanupConnectionResources();
     setSessionState(LectureSessionState.ENDED);
   }, [cleanupConnectionResources]);
 
-  const ENABLE_SERVER_INTERRUPT = true;
   const flushOutput = useCallback(() => {
-    // stop queued TTS locally
-    for (const source of audioSourcesRef.current.values()) {
-      try {
-        source.stop();
-      } catch {}
-    }
-    audioSourcesRef.current.clear();
-    nextStartTimeRef.current = 0;
-    // Treat as end of current AI message box
-    aiMessageOpenRef.current = false;
-    // Best-effort server-side interruption if supported (no-op otherwise)
-    if (
-      ENABLE_SERVER_INTERRUPT &&
-      sessionOpenRef.current &&
-      sessionPromiseRef.current
-    ) {
-      sessionPromiseRef.current.then((session) => {
-        try {
-          session.sendRealtimeInput?.({ event: "response.cancel" });
-        } catch {}
-      });
-    }
-  }, []);
+    flushAudioOutput(audioRefs, runWithOpenSession);
+  }, [runWithOpenSession]);
 
-  // Helper function to add a message to the transcript with validation
-  const addTranscriptEntry = useCallback(
-    (
-      text: string,
-      speaker: "user" | "ai",
-      options?: {
-        slideNumber?: number;
-        attachments?: ChatAttachment[];
-        updateLastEntry?: boolean;
-      }
-    ) => {
-      const trimmed = text.trim();
-      // Skip empty messages
-      if (!trimmed) {
-        return;
-      }
+  // Use extracted transcript manager
+  const { addTranscriptEntry } = useTranscriptManager({
+    setTranscript,
+    currentSlideIndexRef,
+    aiMessageOpenRef,
+  });
 
-      const slideNumber =
-        options?.slideNumber ?? currentSlideIndexRef.current + 1;
-
-      setTranscript((prev) => {
-        const newTranscript = [...prev];
-        const lastEntry = newTranscript[newTranscript.length - 1];
-
-        // Handle updating existing entry (for streaming transcriptions)
-        if (options?.updateLastEntry && lastEntry?.speaker === speaker) {
-          const trimmedText = trimmed;
-          // Skip if this chunk already appears at the end of the last entry
-          if ((lastEntry.text || "").endsWith(trimmedText)) {
-            return prev;
-          }
-          // Replace with latest transcript-so-far to avoid duplicate words
-          const prevText = lastEntry.text || "";
-          if (text.startsWith(prevText)) {
-            lastEntry.text = text;
-          } else if (prevText.startsWith(text)) {
-            // keep prevText (no change)
-          } else {
-            // fallback: append if server is sending pure deltas
-            lastEntry.text = prevText + text;
-          }
-          // Ensure slide number is set
-          if (!lastEntry.slideNumber) {
-            lastEntry.slideNumber = slideNumber;
-          }
-        } else {
-          // Add new entry
-          newTranscript.push({
-            speaker,
-            text,
-            slideNumber,
-            attachments: options?.attachments,
-          });
-          if (speaker === "ai") {
-            aiMessageOpenRef.current = true;
-          }
-        }
-        return newTranscript;
-      });
-    },
-    [setTranscript]
+  // Create sendMessage function using extracted messaging service
+  const sendMessage = useCallback(
+    createSendMessage({
+      sessionOpenRef,
+      runWithOpenSession,
+    }),
+    [runWithOpenSession]
   );
-
-  type SendMessageOptions = {
-    slide?: Slide;
-    text?: string | string[];
-    attachments?: ChatAttachment[];
-    turnComplete?: boolean;
-  };
-
-  const sendMessage = useCallback((options: SendMessageOptions) => {
-    logger.debug(LOG_SOURCE, "sendMessage called.");
-    if (!sessionOpenRef.current) {
-      logger.warn(
-        LOG_SOURCE,
-        "Attempted to send but session is not open. Ignoring."
-      );
-      return;
-    }
-    const { slide, text, attachments } = options;
-    const turnComplete = options.turnComplete ?? true;
-    const parts: any[] = [];
-    if (slide) {
-      const base64Data = slide.imageDataUrl.split(",")[1];
-      if (base64Data) {
-        parts.push({
-          inlineData: { mimeType: "image/png", data: base64Data },
-        });
-      }
-      if (slide.canvasContent && slide.canvasContent.length > 0) {
-        parts.push({
-          text: `Context: The canvas for this slide currently contains the following content blocks, which you or the user created earlier. Use this information in your explanation. Canvas Content: ${JSON.stringify(
-            slide.canvasContent
-          )}`,
-        });
-      }
-    }
-
-    // Process attachments (only images are supported)
-    if (attachments && attachments.length > 0) {
-      for (const attachment of attachments) {
-        if (attachment.type === "image" || attachment.type === "selection") {
-          // Image attachments (including selections)
-          const base64Data = attachment.data.split(",")[1];
-          if (base64Data) {
-            parts.push({
-              inlineData: {
-                mimeType: attachment.mimeType || "image/png",
-                data: base64Data,
-              },
-            });
-          }
-        }
-        // Only images are supported, ignore other types
-      }
-    }
-
-    if (typeof text === "string") {
-      parts.push({ text });
-    } else if (Array.isArray(text)) {
-      for (const t of text) {
-        parts.push({ text: t });
-      }
-    }
-    if (parts.length === 0) {
-      logger.warn(
-        LOG_SOURCE,
-        "sendMessage called with no parts to send. Ignoring."
-      );
-      return;
-    }
-    runWithOpenSession((session) => {
-      try {
-        session.sendClientContent?.({
-          turns: [{ role: "user", parts }],
-          turnComplete,
-        });
-      } catch (e) {
-        logger.warn(
-          LOG_SOURCE,
-          "sendClientContent failed in sendMessage; falling back to realtime inputs.",
-          e as any
-        );
-        try {
-          for (const p of parts) {
-            if (p.inlineData) {
-              session.sendRealtimeInput({
-                media: {
-                  data: p.inlineData.data,
-                  mimeType: p.inlineData.mimeType,
-                },
-              });
-            } else if (typeof p.text === "string") {
-              session.sendRealtimeInput({ text: p.text });
-            }
-          }
-          if (turnComplete) {
-            session.sendRealtimeInput?.({ event: "end_of_turn" });
-          }
-        } catch {}
-      }
-    });
-  }, []);
 
   // (removed) sendSlideImageContext – unified into sendMessage
-
-  const buildSlideMemory = useCallback(
-    (
-      entries: TranscriptEntry[],
-      slideNumber: number,
-      maxMessages: number = 8,
-      maxChars: number = 1800
-    ) => {
-      // Filter entries to only those belonging to the active slide
-      const filtered = entries.filter(
-        (e) =>
-          (e.slideNumber ?? currentSlideIndexRef.current + 1) === slideNumber
-      );
-      // Get the most recent messages (limit to 5-10, default 8)
-      const recent = filtered.slice(-maxMessages);
-      let text = recent
-        .map((e) => `${e.speaker === "user" ? "User" : "Lecturer"}: ${e.text}`)
-        .join("\n");
-      if (text.length > maxChars) {
-        text = text.slice(-maxChars);
-      }
-      return text;
-    },
-    []
-  );
 
   const sendStrongSlideAnchor = useCallback(
     (slide: Slide, transcriptNow: TranscriptEntry[]) => {
       const slideNo = slide.pageNumber;
-      const keyTurns = buildSlideMemory(transcriptNow, slideNo, 8, 1800);
+      const keyTurns = buildSlideMemory(
+        transcriptNow,
+        slideNo,
+        currentSlideIndexRef.current,
+        8,
+        1800
+      );
       const anchor = [
         `ACTIVE SLIDE: ${slideNo}`,
         slide.summary ? `SUMMARY: ${slide.summary}` : null,
@@ -492,30 +216,18 @@ export const useGeminiLive = ({
         .join("\n");
       sendMessage({ text: anchor, turnComplete: false });
     },
-    [buildSlideMemory, sendMessage]
+    [sendMessage]
   );
 
-  const buildSlideAnchorText = useCallback(
+  const buildSlideAnchorTextLocal = useCallback(
     (slide: Slide, transcriptNow: TranscriptEntry[]) => {
-      const keyTurns = buildSlideMemory(
+      return buildSlideAnchorText(
+        slide,
         transcriptNow,
-        slide.pageNumber,
-        8,
-        1800
+        currentSlideIndexRef.current
       );
-      return [
-        `ACTIVE SLIDE: ${slide.pageNumber}`,
-        slide.summary ? `SUMMARY: ${slide.summary}` : null,
-        slide.textContent
-          ? `TEXT EXCERPT: ${slide.textContent.slice(0, 1000)}`
-          : null,
-        keyTurns ? `KEY POINTS SO FAR:\n${keyTurns}` : null,
-        `FOCUS: Explain ONLY slide ${slide.pageNumber}.`,
-      ]
-        .filter(Boolean)
-        .join("\n");
     },
-    [buildSlideMemory]
+    []
   );
 
   // Sends image + optional canvas context + text instruction as ONE coherent turn.
@@ -529,11 +241,16 @@ export const useGeminiLive = ({
       );
       // Stop any ongoing output before changing context
       flushOutput();
-      const anchor = buildSlideAnchorText(slide, transcript);
+      const anchor = buildSlideAnchorTextLocal(slide, transcript);
       sendMessage({ slide, text: anchor, turnComplete: true });
     },
-    [flushOutput, buildSlideAnchorText, sendMessage, transcript]
+    [flushOutput, buildSlideAnchorTextLocal, sendMessage, transcript]
   );
+
+  // Store startLecture in a ref to avoid stale closures in setTimeout callbacks
+  const startLectureRef = useRef<
+    ((reconnectionType?: "disconnected" | "saved" | "new") => void) | null
+  >(null);
 
   const startLecture = useCallback(
     (reconnectionType?: "disconnected" | "saved" | "new") => {
@@ -555,97 +272,41 @@ export const useGeminiLive = ({
       setSessionState(LectureSessionState.CONNECTING);
       setError(null);
 
+      // Reset user-ended flag for new sessions (allows automatic reconnection for disconnected sessions)
+      // Don't reset if user explicitly ended - that flag persists
+      if (reconnectionType === "new") {
+        userEndedSessionRef.current = false;
+      }
+
       // Bump sequence to tag this connection as the latest one
       const thisConnectSeq = ++connectSeqRef.current;
 
       const ai = new GoogleGenAI({ apiKey: apiKey ?? process.env.API_KEY! });
-      outputAudioContextRef.current = new (window.AudioContext ||
-        (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      // Initialize output audio context
+      initializeOutputAudio(outputAudioContextRef);
 
       // Determine reconnection type: if not provided, infer from transcript
       const isReconnect = transcript.length > 0;
       const reconnectType = reconnectionType || (isReconnect ? "saved" : "new");
 
-      const sessionConfig = {
+      // Retrieve resumption handle if available (for automatic reconnection)
+      const resumptionHandle = getResumptionHandle();
+
+      // Build session config using extracted builder
+      const sessionConfig = buildSessionConfig({
         model: selectedModel,
-        config: {
-          responseModalities: [Modality.AUDIO],
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
-          },
-          tools: [
-            {
-              functionDeclarations: [
-                setActiveSlideFunctionDeclaration,
-                provideCanvasMarkdownFunctionDeclaration,
-              ],
-            },
-          ],
-          systemInstruction: `You are an AI lecturer. Your primary task is to explain a presentation, slide-by-slide, in ${selectedLanguage}.
+        selectedVoice,
+        selectedLanguage,
+        generalInfo,
+        userCustomPrompt,
+        resumptionHandle: resumptionHandle,
+      });
 
-        **General Information about the presentation:**
-        ${generalInfo}
-        
-        ${
-          userCustomPrompt ? `**User Preferences:**\n${userCustomPrompt}\n` : ``
-        }
-
-        **Context:**
-        You will be provided with a summary for each slide. You will also receive an image of the current slide when it becomes active. You may also receive text context about content on a 'canvas' for the current slide.
-
-        **Workflow:**
-        1. The application will set the first slide. Greet the user in ${selectedLanguage} and begin by explaining the content of slide 1.
-        2. For each slide, you MUST use the provided summary, the visual information from the slide's image, AND any provided canvas content to deliver a comprehensive explanation. Describe charts, diagrams, and key visual elements.
-        3. After explaining a slide, wait for the user to proceed. Say something like "Let me know when you're ready to continue." to prompt the user.
-        4. If the user asks a question, answer it based on the lecture plan and slide content.
-
-        **Rules:**
-        - All speech must be in ${selectedLanguage}.
-        - Use the 'setActiveSlide' function to change slides ONLY when instructed by the user (e.g., when they say "next slide" or "go to slide 5").
-        - CRITICAL: After successfully changing slides via 'setActiveSlide', you MUST immediately start explaining the new slide's content without waiting for any user prompt.
-        - Do NOT say "Moving to the next slide" or similar phrases. The UI will show the slide change. Just start explaining the new content of the requested slide.
-        - Focus on the ACTIVE slide. Do not discuss other slides or future content unless the user asks, but you can address content in other slides by mentioning the slide number.
-        - If the user asks about a different slide, give a concise answer or teaser and ASK whether to switch: e.g., "Would you like me to jump to slide 7?" Do NOT change slides unless the user explicitly instructs.
-        - When asked about another slide, avoid giving the full explanation until you are on that slide. Keep it short and then return to the current slide unless the user confirms switching.
-        - **Function Call Response Handling:** After a tool call is confirmed as successful, do not repeat your previous statement. For example, if you state you are rendering a diagram and the \`provideCanvasMarkdown\` tool call is successful, do not announce it again. Acknowledge the success silently and continue the conversation naturally.
-        - When you see an anchor line \`ACTIVE SLIDE: N\` or after a successful \`setActiveSlide\` tool call, immediately switch context to slide N and continue ONLY with that slide. Do not finish or reference the previous slide unless asked.
-        - If the user asks about another slide without switching, give a brief teaser and ask whether to switch. Do not change slides or fully explain it until confirmed.
-        
-        **Style:**
-        - Speak naturally like a confident human instructor guiding a class.
-        - Do NOT use meta phrases about slides (e.g., "in this slide", "this slide shows", "on slide N"). Start directly with the explanation.
-        - Avoid filler/openers like "we will", "let's", "here we", "the following". Be direct and conversational.
-        - Use clear transitions and, where helpful, short rhetorical questions to keep engagement high.
-        - Prefer present tense and plain language unless the user requests otherwise.
-        
-        **Canvas for Clarification (Advanced):**
-        - You have a powerful tool: 'provideCanvasMarkdown'. Use it proactively to enhance your explanations when the slide content is not enough, or when the user asks a question that would benefit from a visual aid.
-        - This function accepts a single 'markdown' parameter containing raw markdown text.
-        
-        - **Supported Markdown Features:**
-          1.  Standard markdown: headings, lists, bold, italic, links, images, tables
-          2.  GitHub Flavored Markdown (GFM): task lists, strikethrough, autolinks
-          3.  Math: Use $...$ for inline math and $$...$$ for block math (KaTeX)
-          4.  Mermaid diagrams: Use \`\`\`mermaid code fences for flowcharts, sequence diagrams, etc.
-          5.  Code highlighting: Use \`\`\`language code fences for syntax-highlighted code
-          6.  Emojis: Use :emoji: syntax or unicode emojis
-        
-        - **Example Usage:**
-          If a user asks for a comparison with math and a diagram, provide markdown like:
-          { "markdown": "# Comparison\\n\\nFormula: $E = mc^2$\\n\\nMermaid diagram: code fence with mermaid language tag followed by diagram syntax" }
-        
-        - **When to Use the Canvas:**
-          - To explain complex concepts that are hard to describe with words alone
-          - To show code snippets with syntax highlighting
-          - To draw diagrams (flowcharts, sequence diagrams, etc.) using Mermaid
-          - To display mathematical formulas and equations
-          - To provide formatted lists, tables, or step-by-step instructions
-        
-        - **Crucially:** After calling 'provideCanvasMarkdown', you MUST inform the user. Say something like, "I've put a diagram on the canvas to illustrate that for you," or "Take a look at the canvas for the code example." This guides the user to the new visual information.`,
-        },
-      };
+      // Reset user-ended flag when starting a new connection
+      // (unless this is an explicit user end, which is handled in end())
+      if (!userEndedSessionRef.current) {
+        isReconnectingRef.current = reconnectType === "disconnected";
+      }
 
       logger.debug(LOG_SOURCE, "Connecting to Gemini Live...");
 
@@ -659,72 +320,12 @@ export const useGeminiLive = ({
             }
             logger.log(LOG_SOURCE, "Session opened successfully.");
             sessionOpenRef.current = true;
+            // Reset reconnection attempts on successful connection
+            reconnectionAttemptsRef.current = 0;
+            isReconnectingRef.current = false;
             try {
-              audioContextRef.current = new (window.AudioContext ||
-                (window as any).webkitAudioContext)({ sampleRate: 16000 });
-              const stream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
-              });
-              // It's possible the session was closed while awaiting getUserMedia.
-              if (!sessionOpenRef.current) {
-                try {
-                  stream.getTracks().forEach((t) => t.stop());
-                } catch {}
-                logger.warn(
-                  LOG_SOURCE,
-                  "getUserMedia resolved after session closed. Aborting audio init."
-                );
-                return;
-              }
-              mediaStreamRef.current = stream;
-              logger.debug(LOG_SOURCE, "Microphone stream acquired.");
-
-              const ctx = audioContextRef.current;
-              if (!ctx) {
-                // Audio context may have been closed by cleanup during a race.
-                try {
-                  stream.getTracks().forEach((t) => t.stop());
-                } catch {}
-                logger.warn(
-                  LOG_SOURCE,
-                  "AudioContext missing during onopen. Aborting audio init."
-                );
-                return;
-              }
-
-              const source = ctx.createMediaStreamSource(stream);
-              mediaStreamSourceRef.current = source;
-
-              const scriptProcessor = ctx.createScriptProcessor(4096, 1, 1);
-              scriptProcessorRef.current = scriptProcessor;
-
-              scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-                // Do not attempt to stream audio if muted or session is not open
-                if (isMutedRef.current || !sessionOpenRef.current) return;
-                const inputData =
-                  audioProcessingEvent.inputBuffer.getChannelData(0);
-
-                const bufferLength = inputData.length;
-                const pcm16 = new Int16Array(bufferLength);
-                for (let i = 0; i < bufferLength; i++) {
-                  pcm16[i] = inputData[i] * 32768;
-                }
-
-                const pcmBlob: GenAI_Blob = {
-                  data: encode(new Uint8Array(pcm16.buffer)),
-                  mimeType: "audio/pcm;rate=16000",
-                };
-
-                runWithOpenSession((session) => {
-                  session.sendRealtimeInput({ media: pcmBlob });
-                });
-              };
-
-              const gainNode = audioContextRef.current.createGain();
-              gainNode.gain.value = 0;
-              source.connect(scriptProcessor);
-              scriptProcessor.connect(gainNode);
-              gainNode.connect(audioContextRef.current.destination);
+              // Initialize input audio (microphone stream and processing)
+              await initializeInputAudio(audioRefs, runWithOpenSession);
 
               setSessionState(LectureSessionState.READY);
 
@@ -745,6 +346,7 @@ export const useGeminiLive = ({
                   const recentMessages = buildSlideMemory(
                     transcript,
                     currentSlideNumber,
+                    currentSlideIndexRef.current,
                     8,
                     1800
                   );
@@ -869,6 +471,48 @@ export const useGeminiLive = ({
             if (thisConnectSeq !== connectSeqRef.current) {
               return;
             }
+
+            // Handle session resumption updates
+            if ((message as any).sessionResumptionUpdate) {
+              const update = (message as any).sessionResumptionUpdate;
+              if (update.resumable && update.newHandle) {
+                storeResumptionHandle(update.newHandle);
+                logger.log(
+                  LOG_SOURCE,
+                  "Received new resumption handle, stored for future reconnection"
+                );
+                // Reset reconnection attempts on successful resumption update
+                reconnectionAttemptsRef.current = 0;
+                isReconnectingRef.current = false;
+              }
+            }
+
+            // Handle GoAway messages (connection will terminate soon)
+            if ((message as any).goAway) {
+              const goAway = (message as any).goAway;
+              const timeLeft = goAway.timeLeft;
+              logger.warn(
+                LOG_SOURCE,
+                `Connection will terminate in ${timeLeft} seconds`
+              );
+
+              // Proactive reconnection: start reconnecting before connection terminates
+              if (!userEndedSessionRef.current && !isReconnectingRef.current) {
+                logger.log(
+                  LOG_SOURCE,
+                  "Starting proactive reconnection before connection terminates"
+                );
+                isReconnectingRef.current = true;
+                setError("Reconnecting to maintain session...");
+                // Small delay to let current message processing complete
+                setTimeout(() => {
+                  if (!userEndedSessionRef.current && startLectureRef.current) {
+                    startLectureRef.current("disconnected");
+                  }
+                }, 1000);
+              }
+            }
+
             if (message.serverContent) {
               setSessionState(LectureSessionState.LECTURING);
             }
@@ -893,7 +537,7 @@ export const useGeminiLive = ({
                     onSlideChange(slideNumber);
                     // Send slide image/canvas and anchor in a single coherent turn
                     const slide = slides[slideNumber - 1];
-                    const anchor = buildSlideAnchorText(slide, transcript);
+                    const anchor = buildSlideAnchorTextLocal(slide, transcript);
                     sendMessage({ slide, text: anchor, turnComplete: true });
                     runWithOpenSession((session) => {
                       session.sendToolResponse({
@@ -1036,29 +680,11 @@ export const useGeminiLive = ({
               });
             }
 
+            // Handle audio playback from server
             const audioData =
               message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (audioData && outputAudioContextRef.current) {
-              const outputCtx = outputAudioContextRef.current;
-              nextStartTimeRef.current = Math.max(
-                nextStartTimeRef.current,
-                outputCtx.currentTime
-              );
-              const audioBuffer = await decodeAudioData(
-                decode(audioData),
-                outputCtx,
-                24000,
-                1
-              );
-              const source = outputCtx.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(outputCtx.destination);
-              source.addEventListener("ended", () => {
-                audioSourcesRef.current.delete(source);
-              });
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
-              audioSourcesRef.current.add(source);
+            if (audioData) {
+              await handleAudioPlayback(audioData, audioRefs);
             }
 
             if (message.serverContent?.generationComplete) {
@@ -1086,13 +712,8 @@ export const useGeminiLive = ({
                 LOG_SOURCE,
                 "AI speech was interrupted. Clearing audio queue."
               );
-              for (const source of audioSourcesRef.current.values()) {
-                source.stop();
-              }
-              audioSourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
-              // Treat interruption as end of current message box
-              aiMessageOpenRef.current = false;
+              // Flush audio output on interruption
+              flushAudioOutput(audioRefs, runWithOpenSession);
             }
           },
           onerror: (e: ErrorEvent) => {
@@ -1102,9 +723,49 @@ export const useGeminiLive = ({
             }
             logger.error(LOG_SOURCE, "Session error event received.", e);
             sessionOpenRef.current = false;
-            setError("A connection error occurred. Please try to reconnect.");
-            cleanupConnectionResources();
-            setSessionState(LectureSessionState.DISCONNECTED);
+
+            // If user explicitly ended session, don't attempt reconnection
+            if (userEndedSessionRef.current) {
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.ENDED);
+              return;
+            }
+
+            // Attempt automatic reconnection unless max attempts reached
+            if (
+              reconnectionAttemptsRef.current < MAX_RECONNECTION_ATTEMPTS &&
+              !isReconnectingRef.current
+            ) {
+              reconnectionAttemptsRef.current += 1;
+              isReconnectingRef.current = true;
+              const delay = Math.min(
+                1000 * Math.pow(2, reconnectionAttemptsRef.current - 1),
+                5000
+              ); // Exponential backoff, max 5s
+              logger.log(
+                LOG_SOURCE,
+                `Attempting automatic reconnection (attempt ${reconnectionAttemptsRef.current}/${MAX_RECONNECTION_ATTEMPTS}) after ${delay}ms`
+              );
+              setError(
+                `Reconnecting... (attempt ${reconnectionAttemptsRef.current}/${MAX_RECONNECTION_ATTEMPTS})`
+              );
+              cleanupConnectionResources();
+              setTimeout(() => {
+                if (!userEndedSessionRef.current && startLectureRef.current) {
+                  startLectureRef.current("disconnected");
+                }
+              }, delay);
+            } else {
+              // Max attempts reached or already reconnecting
+              setError(
+                reconnectionAttemptsRef.current >= MAX_RECONNECTION_ATTEMPTS
+                  ? "Connection failed after multiple attempts. Please try reconnecting manually."
+                  : "A connection error occurred. Please try to reconnect."
+              );
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.DISCONNECTED);
+              isReconnectingRef.current = false;
+            }
           },
           onclose: (e: CloseEvent) => {
             // Ignore closes from older connections (e.g., cleanup of previous session)
@@ -1120,15 +781,52 @@ export const useGeminiLive = ({
               "wasClean:",
               e.wasClean
             );
-            // Regardless of clean/unclean close, stop streaming and require reconnect
             sessionOpenRef.current = false;
-            if (!e.wasClean) {
-              setError(
-                "The connection was lost unexpectedly. Please reconnect."
-              );
+
+            // If user explicitly ended session, don't attempt reconnection
+            if (userEndedSessionRef.current) {
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.ENDED);
+              return;
             }
-            cleanupConnectionResources();
-            setSessionState(LectureSessionState.DISCONNECTED);
+
+            // Attempt automatic reconnection unless max attempts reached
+            if (
+              reconnectionAttemptsRef.current < MAX_RECONNECTION_ATTEMPTS &&
+              !isReconnectingRef.current
+            ) {
+              reconnectionAttemptsRef.current += 1;
+              isReconnectingRef.current = true;
+              const delay = Math.min(
+                1000 * Math.pow(2, reconnectionAttemptsRef.current - 1),
+                5000
+              ); // Exponential backoff, max 5s
+              logger.log(
+                LOG_SOURCE,
+                `Connection closed. Attempting automatic reconnection (attempt ${reconnectionAttemptsRef.current}/${MAX_RECONNECTION_ATTEMPTS}) after ${delay}ms`
+              );
+              setError(
+                `Reconnecting... (attempt ${reconnectionAttemptsRef.current}/${MAX_RECONNECTION_ATTEMPTS})`
+              );
+              cleanupConnectionResources();
+              setTimeout(() => {
+                if (!userEndedSessionRef.current && startLectureRef.current) {
+                  startLectureRef.current("disconnected");
+                }
+              }, delay);
+            } else {
+              // Max attempts reached or already reconnecting
+              setError(
+                reconnectionAttemptsRef.current >= MAX_RECONNECTION_ATTEMPTS
+                  ? "Connection lost after multiple reconnection attempts. Please try reconnecting manually."
+                  : e.wasClean
+                  ? "Connection closed."
+                  : "The connection was lost unexpectedly. Please reconnect."
+              );
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.DISCONNECTED);
+              isReconnectingRef.current = false;
+            }
           },
         },
       });
@@ -1155,6 +853,9 @@ export const useGeminiLive = ({
     ]
   );
 
+  // Update ref with latest startLecture function
+  startLectureRef.current = startLecture;
+
   const replay = useCallback(() => {
     logger.debug(LOG_SOURCE, "replay() called.");
     sendMessage({
@@ -1180,12 +881,12 @@ export const useGeminiLive = ({
     onSlideChange(slideNumber);
     // Send slide image/canvas and anchor in a single coherent turn
     const slide = slides[nextIndex];
-    const anchor = buildSlideAnchorText(slide, transcript);
+    const anchor = buildSlideAnchorTextLocal(slide, transcript);
     sendMessage({ slide, text: anchor, turnComplete: true });
   }, [
     sendMessage,
     flushOutput,
-    buildSlideAnchorText,
+    buildSlideAnchorTextLocal,
     slides,
     transcript,
     onSlideChange,
@@ -1208,12 +909,12 @@ export const useGeminiLive = ({
     onSlideChange(slideNumber);
     // Send slide image/canvas and anchor in a single coherent turn
     const slide = slides[prevIndex];
-    const anchor = buildSlideAnchorText(slide, transcript);
+    const anchor = buildSlideAnchorTextLocal(slide, transcript);
     sendMessage({ slide, text: anchor, turnComplete: true });
   }, [
     sendMessage,
     flushOutput,
-    buildSlideAnchorText,
+    buildSlideAnchorTextLocal,
     slides,
     transcript,
     onSlideChange,
@@ -1236,13 +937,13 @@ export const useGeminiLive = ({
       onSlideChange(slideNumber);
       // Send slide image/canvas and anchor in a single coherent turn
       const slide = slides[targetIndex];
-      const anchor = buildSlideAnchorText(slide, transcript);
+      const anchor = buildSlideAnchorTextLocal(slide, transcript);
       sendMessage({ slide, text: anchor, turnComplete: true });
     },
     [
       sendMessage,
       flushOutput,
-      buildSlideAnchorText,
+      buildSlideAnchorTextLocal,
       slides,
       transcript,
       onSlideChange,
