@@ -284,6 +284,69 @@ export const useGeminiLive = ({
     }
   }, []);
 
+  // Helper function to add a message to the transcript with validation
+  const addTranscriptEntry = useCallback(
+    (
+      text: string,
+      speaker: "user" | "ai",
+      options?: {
+        slideNumber?: number;
+        attachments?: ChatAttachment[];
+        updateLastEntry?: boolean;
+      }
+    ) => {
+      const trimmed = text.trim();
+      // Skip empty messages
+      if (!trimmed) {
+        return;
+      }
+
+      const slideNumber =
+        options?.slideNumber ?? currentSlideIndexRef.current + 1;
+
+      setTranscript((prev) => {
+        const newTranscript = [...prev];
+        const lastEntry = newTranscript[newTranscript.length - 1];
+
+        // Handle updating existing entry (for streaming transcriptions)
+        if (options?.updateLastEntry && lastEntry?.speaker === speaker) {
+          const trimmedText = trimmed;
+          // Skip if this chunk already appears at the end of the last entry
+          if ((lastEntry.text || "").endsWith(trimmedText)) {
+            return prev;
+          }
+          // Replace with latest transcript-so-far to avoid duplicate words
+          const prevText = lastEntry.text || "";
+          if (text.startsWith(prevText)) {
+            lastEntry.text = text;
+          } else if (prevText.startsWith(text)) {
+            // keep prevText (no change)
+          } else {
+            // fallback: append if server is sending pure deltas
+            lastEntry.text = prevText + text;
+          }
+          // Ensure slide number is set
+          if (!lastEntry.slideNumber) {
+            lastEntry.slideNumber = slideNumber;
+          }
+        } else {
+          // Add new entry
+          newTranscript.push({
+            speaker,
+            text,
+            slideNumber,
+            attachments: options?.attachments,
+          });
+          if (speaker === "ai") {
+            aiMessageOpenRef.current = true;
+          }
+        }
+        return newTranscript;
+      });
+    },
+    [setTranscript]
+  );
+
   type SendMessageOptions = {
     slide?: Slide;
     text?: string | string[];
@@ -318,11 +381,11 @@ export const useGeminiLive = ({
         });
       }
     }
-    
+
     // Process attachments (only images are supported)
     if (attachments && attachments.length > 0) {
       for (const attachment of attachments) {
-        if (attachment.type === 'image' || attachment.type === 'selection') {
+        if (attachment.type === "image" || attachment.type === "selection") {
           // Image attachments (including selections)
           const base64Data = attachment.data.split(",")[1];
           if (base64Data) {
@@ -337,7 +400,7 @@ export const useGeminiLive = ({
         // Only images are supported, ignore other types
       }
     }
-    
+
     if (typeof text === "string") {
       parts.push({ text });
     } else if (Array.isArray(text)) {
@@ -391,14 +454,16 @@ export const useGeminiLive = ({
     (
       entries: TranscriptEntry[],
       slideNumber: number,
-      maxTurns: number = 12,
+      maxMessages: number = 8,
       maxChars: number = 1800
     ) => {
+      // Filter entries to only those belonging to the active slide
       const filtered = entries.filter(
         (e) =>
           (e.slideNumber ?? currentSlideIndexRef.current + 1) === slideNumber
       );
-      const recent = filtered.slice(-maxTurns);
+      // Get the most recent messages (limit to 5-10, default 8)
+      const recent = filtered.slice(-maxMessages);
       let text = recent
         .map((e) => `${e.speaker === "user" ? "User" : "Lecturer"}: ${e.text}`)
         .join("\n");
@@ -413,7 +478,7 @@ export const useGeminiLive = ({
   const sendStrongSlideAnchor = useCallback(
     (slide: Slide, transcriptNow: TranscriptEntry[]) => {
       const slideNo = slide.pageNumber;
-      const keyTurns = buildSlideMemory(transcriptNow, slideNo, 12, 1800);
+      const keyTurns = buildSlideMemory(transcriptNow, slideNo, 8, 1800);
       const anchor = [
         `ACTIVE SLIDE: ${slideNo}`,
         slide.summary ? `SUMMARY: ${slide.summary}` : null,
@@ -435,7 +500,7 @@ export const useGeminiLive = ({
       const keyTurns = buildSlideMemory(
         transcriptNow,
         slide.pageNumber,
-        12,
+        8,
         1800
       );
       return [
@@ -470,44 +535,55 @@ export const useGeminiLive = ({
     [flushOutput, buildSlideAnchorText, sendMessage, transcript]
   );
 
-  const startLecture = useCallback(() => {
-    logger.log(LOG_SOURCE, "startLecture() called.");
-    if (slides.length === 0) {
-      logger.warn(LOG_SOURCE, "startLecture() called with 0 slides. Aborting.");
-      return;
-    }
+  const startLecture = useCallback(
+    (reconnectionType?: "disconnected" | "saved" | "new") => {
+      logger.log(
+        LOG_SOURCE,
+        `startLecture() called with reconnectionType: ${
+          reconnectionType || "new"
+        }.`
+      );
+      if (slides.length === 0) {
+        logger.warn(
+          LOG_SOURCE,
+          "startLecture() called with 0 slides. Aborting."
+        );
+        return;
+      }
 
-    cleanupConnectionResources();
-    setSessionState(LectureSessionState.CONNECTING);
-    setError(null);
+      cleanupConnectionResources();
+      setSessionState(LectureSessionState.CONNECTING);
+      setError(null);
 
-    // Bump sequence to tag this connection as the latest one
-    const thisConnectSeq = ++connectSeqRef.current;
+      // Bump sequence to tag this connection as the latest one
+      const thisConnectSeq = ++connectSeqRef.current;
 
-    const ai = new GoogleGenAI({ apiKey: apiKey ?? process.env.API_KEY! });
-    outputAudioContextRef.current = new (window.AudioContext ||
-      (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const ai = new GoogleGenAI({ apiKey: apiKey ?? process.env.API_KEY! });
+      outputAudioContextRef.current = new (window.AudioContext ||
+        (window as any).webkitAudioContext)({ sampleRate: 24000 });
 
-    const isReconnect = transcript.length > 0;
+      // Determine reconnection type: if not provided, infer from transcript
+      const isReconnect = transcript.length > 0;
+      const reconnectType = reconnectionType || (isReconnect ? "saved" : "new");
 
-    const sessionConfig = {
-      model: selectedModel,
-      config: {
-        responseModalities: [Modality.AUDIO],
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
-        },
-        tools: [
-          {
-            functionDeclarations: [
-              setActiveSlideFunctionDeclaration,
-              provideCanvasMarkdownFunctionDeclaration,
-            ],
+      const sessionConfig = {
+        model: selectedModel,
+        config: {
+          responseModalities: [Modality.AUDIO],
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: selectedVoice } },
           },
-        ],
-        systemInstruction: `You are an AI lecturer. Your primary task is to explain a presentation, slide-by-slide, in ${selectedLanguage}.
+          tools: [
+            {
+              functionDeclarations: [
+                setActiveSlideFunctionDeclaration,
+                provideCanvasMarkdownFunctionDeclaration,
+              ],
+            },
+          ],
+          systemInstruction: `You are an AI lecturer. Your primary task is to explain a presentation, slide-by-slide, in ${selectedLanguage}.
 
         **General Information about the presentation:**
         ${generalInfo}
@@ -568,260 +644,343 @@ export const useGeminiLive = ({
           - To provide formatted lists, tables, or step-by-step instructions
         
         - **Crucially:** After calling 'provideCanvasMarkdown', you MUST inform the user. Say something like, "I've put a diagram on the canvas to illustrate that for you," or "Take a look at the canvas for the code example." This guides the user to the new visual information.`,
-      },
-    };
+        },
+      };
 
-    logger.debug(LOG_SOURCE, "Connecting to Gemini Live...");
+      logger.debug(LOG_SOURCE, "Connecting to Gemini Live...");
 
-    const sessionPromise = ai.live.connect({
-      ...sessionConfig,
-      callbacks: {
-        onopen: async () => {
-          // Ignore if this open belongs to an older connection
-          if (thisConnectSeq !== connectSeqRef.current) {
-            return;
-          }
-          logger.log(LOG_SOURCE, "Session opened successfully.");
-          sessionOpenRef.current = true;
-          try {
-            audioContextRef.current = new (window.AudioContext ||
-              (window as any).webkitAudioContext)({ sampleRate: 16000 });
-            const stream = await navigator.mediaDevices.getUserMedia({
-              audio: true,
-            });
-            // It's possible the session was closed while awaiting getUserMedia.
-            if (!sessionOpenRef.current) {
-              try {
-                stream.getTracks().forEach((t) => t.stop());
-              } catch {}
-              logger.warn(
-                LOG_SOURCE,
-                "getUserMedia resolved after session closed. Aborting audio init."
-              );
+      const sessionPromise = ai.live.connect({
+        ...sessionConfig,
+        callbacks: {
+          onopen: async () => {
+            // Ignore if this open belongs to an older connection
+            if (thisConnectSeq !== connectSeqRef.current) {
               return;
             }
-            mediaStreamRef.current = stream;
-            logger.debug(LOG_SOURCE, "Microphone stream acquired.");
+            logger.log(LOG_SOURCE, "Session opened successfully.");
+            sessionOpenRef.current = true;
+            try {
+              audioContextRef.current = new (window.AudioContext ||
+                (window as any).webkitAudioContext)({ sampleRate: 16000 });
+              const stream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+              });
+              // It's possible the session was closed while awaiting getUserMedia.
+              if (!sessionOpenRef.current) {
+                try {
+                  stream.getTracks().forEach((t) => t.stop());
+                } catch {}
+                logger.warn(
+                  LOG_SOURCE,
+                  "getUserMedia resolved after session closed. Aborting audio init."
+                );
+                return;
+              }
+              mediaStreamRef.current = stream;
+              logger.debug(LOG_SOURCE, "Microphone stream acquired.");
 
-            const ctx = audioContextRef.current;
-            if (!ctx) {
-              // Audio context may have been closed by cleanup during a race.
-              try {
-                stream.getTracks().forEach((t) => t.stop());
-              } catch {}
-              logger.warn(
-                LOG_SOURCE,
-                "AudioContext missing during onopen. Aborting audio init."
-              );
-              return;
-            }
-
-            const source = ctx.createMediaStreamSource(stream);
-            mediaStreamSourceRef.current = source;
-
-            const scriptProcessor = ctx.createScriptProcessor(4096, 1, 1);
-            scriptProcessorRef.current = scriptProcessor;
-
-            scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-              // Do not attempt to stream audio if muted or session is not open
-              if (isMutedRef.current || !sessionOpenRef.current) return;
-              const inputData =
-                audioProcessingEvent.inputBuffer.getChannelData(0);
-
-              const bufferLength = inputData.length;
-              const pcm16 = new Int16Array(bufferLength);
-              for (let i = 0; i < bufferLength; i++) {
-                pcm16[i] = inputData[i] * 32768;
+              const ctx = audioContextRef.current;
+              if (!ctx) {
+                // Audio context may have been closed by cleanup during a race.
+                try {
+                  stream.getTracks().forEach((t) => t.stop());
+                } catch {}
+                logger.warn(
+                  LOG_SOURCE,
+                  "AudioContext missing during onopen. Aborting audio init."
+                );
+                return;
               }
 
-              const pcmBlob: GenAI_Blob = {
-                data: encode(new Uint8Array(pcm16.buffer)),
-                mimeType: "audio/pcm;rate=16000",
+              const source = ctx.createMediaStreamSource(stream);
+              mediaStreamSourceRef.current = source;
+
+              const scriptProcessor = ctx.createScriptProcessor(4096, 1, 1);
+              scriptProcessorRef.current = scriptProcessor;
+
+              scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+                // Do not attempt to stream audio if muted or session is not open
+                if (isMutedRef.current || !sessionOpenRef.current) return;
+                const inputData =
+                  audioProcessingEvent.inputBuffer.getChannelData(0);
+
+                const bufferLength = inputData.length;
+                const pcm16 = new Int16Array(bufferLength);
+                for (let i = 0; i < bufferLength; i++) {
+                  pcm16[i] = inputData[i] * 32768;
+                }
+
+                const pcmBlob: GenAI_Blob = {
+                  data: encode(new Uint8Array(pcm16.buffer)),
+                  mimeType: "audio/pcm;rate=16000",
+                };
+
+                runWithOpenSession((session) => {
+                  session.sendRealtimeInput({ media: pcmBlob });
+                });
               };
 
-              runWithOpenSession((session) => {
-                session.sendRealtimeInput({ media: pcmBlob });
-              });
-            };
+              const gainNode = audioContextRef.current.createGain();
+              gainNode.gain.value = 0;
+              source.connect(scriptProcessor);
+              scriptProcessor.connect(gainNode);
+              gainNode.connect(audioContextRef.current.destination);
 
-            const gainNode = audioContextRef.current.createGain();
-            gainNode.gain.value = 0;
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(gainNode);
-            gainNode.connect(audioContextRef.current.destination);
+              setSessionState(LectureSessionState.READY);
 
-            setSessionState(LectureSessionState.READY);
+              const lecturePlanForAI = slides
+                .map((s) => `Slide ${s.pageNumber}: ${s.summary}`)
+                .join("\n");
 
-            const lecturePlanForAI = slides
-              .map((s) => `Slide ${s.pageNumber}: ${s.summary}`)
-              .join("\n");
+              if (isReconnect) {
+                const currentSlideNumber = currentSlideIndex + 1;
+                const currentSlide = slides[currentSlideIndex];
 
-            if (isReconnect) {
-              logger.log(LOG_SOURCE, "Reconnecting. Greeting-only resume.");
-              const currentSlideNumber = currentSlideIndex + 1;
-              const instruction = `INSTRUCTION: You are resuming an existing lecture. ONLY say: "We are on slide ${currentSlideNumber}, ready to continue!" Do not explain any content. Wait for the user to proceed.`;
-              // Single-turn send: image + canvas (if any) + instruction
-              sendMessage({
-                slide: slides[currentSlideIndex],
-                text: instruction,
-                turnComplete: true,
-              });
-            } else {
-              // For a new lecture, send the initial image + plan + instruction as a single turn
-              const firstSlide = slides[0];
-              const base64Data = firstSlide.imageDataUrl.split(",")[1];
-              if (base64Data) {
-                const parts: any[] = [
-                  {
-                    inlineData: {
-                      mimeType: "image/png",
-                      data: base64Data,
-                    },
-                  },
-                  {
-                    text: `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
-                  },
-                  {
-                    text: `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
-                  },
-                ];
-                runWithOpenSession((session) => {
-                  try {
-                    session.sendClientContent?.({
-                      turns: [{ role: "user", parts }],
-                      turnComplete: true,
-                    });
-                    logger.debug(
-                      LOG_SOURCE,
-                      "Sent initial context and instruction as a single turn for a new lecture."
-                    );
-                  } catch (e) {
-                    logger.warn(
-                      LOG_SOURCE,
-                      "sendClientContent failed for initial lecture; falling back to separate realtime inputs.",
-                      e as any
-                    );
-                    try {
-                      session.sendRealtimeInput({
-                        media: { data: base64Data, mimeType: "image/png" },
-                      });
-                      session.sendRealtimeInput({
-                        text: `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
-                      });
-                      session.sendRealtimeInput({
-                        text: `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
-                      });
-                      session.sendRealtimeInput?.({ event: "end_of_turn" });
-                    } catch {}
-                  }
-                });
-              } else {
-                // Fallback if image is missing (should not happen)
-                sendMessage({
-                  text: [
-                    `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
-                    `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
-                  ],
-                  turnComplete: true,
-                });
-                runWithOpenSession((session) => {
-                  try {
-                    session.sendRealtimeInput?.({ event: "end_of_turn" });
-                  } catch {}
-                });
-              }
-            }
-          } catch (err) {
-            logger.error(LOG_SOURCE, "Microphone access denied or error:", err);
-            setError(
-              "Microphone access is required. Please allow microphone permissions and refresh."
-            );
-            sessionOpenRef.current = false;
-            // Cleanup but keep the session in an error state rather than "ENDED"
-            cleanupConnectionResources();
-            setSessionState(LectureSessionState.ERROR);
-          }
-        },
-        onmessage: async (message: LiveServerMessage) => {
-          // Ignore messages from older connections
-          if (thisConnectSeq !== connectSeqRef.current) {
-            return;
-          }
-          if (message.serverContent) {
-            setSessionState(LectureSessionState.LECTURING);
-          }
-          if (message.serverContent?.inputTranscription) {
-            setSessionState(LectureSessionState.LISTENING);
-          }
+                if (reconnectType === "disconnected") {
+                  // Silent reconnect: send slide image + canvas + recent messages from active slide only
+                  logger.log(
+                    LOG_SOURCE,
+                    "Reconnecting from disconnected state. Silent resume with context."
+                  );
+                  const recentMessages = buildSlideMemory(
+                    transcript,
+                    currentSlideNumber,
+                    8,
+                    1800
+                  );
+                  const contextParts: string[] = [
+                    `ACTIVE SLIDE: ${currentSlideNumber}`,
+                    currentSlide.summary
+                      ? `SUMMARY: ${currentSlide.summary}`
+                      : null,
+                    currentSlide.textContent
+                      ? `TEXT EXCERPT: ${currentSlide.textContent.slice(
+                          0,
+                          1000
+                        )}`
+                      : null,
+                    recentMessages
+                      ? `RECENT CONTEXT FROM THIS SLIDE:\n${recentMessages}`
+                      : null,
+                  ].filter(Boolean) as string[];
 
-          if (message.toolCall) {
-            logger.debug(LOG_SOURCE, "Received tool call:", message.toolCall);
-            for (const fc of message.toolCall.functionCalls) {
-              if (fc.name === "setActiveSlide") {
-                const slideNumber = fc.args.slideNumber as number;
-                logger.log(
-                  LOG_SOURCE,
-                  `Processing setActiveSlide function call for slide number: ${slideNumber}`
-                );
-                if (slideNumber >= 1 && slideNumber <= slides.length) {
-                  // Update the slide index ref immediately to ensure transcript tagging uses the latest slide
-                  currentSlideIndexRef.current = slideNumber - 1;
-                  // Interrupt any ongoing output before changing context
-                  flushOutput();
-                  onSlideChange(slideNumber);
-                  // Send slide image/canvas and anchor in a single coherent turn
-                  const slide = slides[slideNumber - 1];
-                  const anchor = buildSlideAnchorText(slide, transcript);
-                  sendMessage({ slide, text: anchor, turnComplete: true });
-                  runWithOpenSession((session) => {
-                    session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: {
-                          result: `OK. Changed to slide ${slideNumber}.`,
-                        },
-                      },
-                    });
+                  // Send slide image + canvas + context without any greeting instruction
+                  sendMessage({
+                    slide: currentSlide,
+                    text: contextParts.join("\n"),
+                    turnComplete: true,
                   });
                 } else {
-                  logger.error(
+                  // Saved session continuation: keep current behavior with greeting
+                  logger.log(
                     LOG_SOURCE,
-                    `AI requested invalid slide number: ${slideNumber}`
+                    "Reconnecting saved session. Greeting-only resume."
                   );
-                  runWithOpenSession((session) => {
-                    session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: {
-                          error: `Invalid slide number: ${slideNumber}. There are only ${slides.length} slides.`,
-                        },
-                      },
-                    });
+                  const instruction = `INSTRUCTION: You are resuming an existing lecture. ONLY say: "We are on slide ${currentSlideNumber}, ready to continue!" Do not explain any content. Wait for the user to proceed.`;
+                  // Single-turn send: image + canvas (if any) + instruction
+                  sendMessage({
+                    slide: currentSlide,
+                    text: instruction,
+                    turnComplete: true,
                   });
                 }
-              } else if (fc.name === "provideCanvasMarkdown") {
-                logger.log(
-                  LOG_SOURCE,
-                  "provideCanvasMarkdown raw args:",
-                  fc.args,
-                  "(type:",
-                  typeof fc.args,
-                  ")"
-                );
-                let parsedArgs = fc.args;
-                if (typeof parsedArgs === "string") {
-                  try {
-                    parsedArgs = JSON.parse(parsedArgs);
-                  } catch {
-                    logger.warn(
+              } else {
+                // For a new lecture, send the initial image + plan + instruction as a single turn
+                const firstSlide = slides[0];
+                const base64Data = firstSlide.imageDataUrl.split(",")[1];
+                if (base64Data) {
+                  const parts: any[] = [
+                    {
+                      inlineData: {
+                        mimeType: "image/png",
+                        data: base64Data,
+                      },
+                    },
+                    {
+                      text: `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
+                    },
+                    {
+                      text: `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
+                    },
+                  ];
+                  runWithOpenSession((session) => {
+                    try {
+                      session.sendClientContent?.({
+                        turns: [{ role: "user", parts }],
+                        turnComplete: true,
+                      });
+                      logger.debug(
+                        LOG_SOURCE,
+                        "Sent initial context and instruction as a single turn for a new lecture."
+                      );
+                    } catch (e) {
+                      logger.warn(
+                        LOG_SOURCE,
+                        "sendClientContent failed for initial lecture; falling back to separate realtime inputs.",
+                        e as any
+                      );
+                      try {
+                        session.sendRealtimeInput({
+                          media: { data: base64Data, mimeType: "image/png" },
+                        });
+                        session.sendRealtimeInput({
+                          text: `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
+                        });
+                        session.sendRealtimeInput({
+                          text: `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
+                        });
+                        session.sendRealtimeInput?.({ event: "end_of_turn" });
+                      } catch {}
+                    }
+                  });
+                } else {
+                  // Fallback if image is missing (should not happen)
+                  sendMessage({
+                    text: [
+                      `CONTEXT: The lecture plan is as follows:\n${lecturePlanForAI}\n\nEND OF CONTEXT.`,
+                      `INSTRUCTION: You are on slide 1. Please begin the lecture now. Greet the user and then explain the content of this first slide.`,
+                    ],
+                    turnComplete: true,
+                  });
+                  runWithOpenSession((session) => {
+                    try {
+                      session.sendRealtimeInput?.({ event: "end_of_turn" });
+                    } catch {}
+                  });
+                }
+              }
+            } catch (err) {
+              logger.error(
+                LOG_SOURCE,
+                "Microphone access denied or error:",
+                err
+              );
+              setError(
+                "Microphone access is required. Please allow microphone permissions and refresh."
+              );
+              sessionOpenRef.current = false;
+              // Cleanup but keep the session in an error state rather than "ENDED"
+              cleanupConnectionResources();
+              setSessionState(LectureSessionState.ERROR);
+            }
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            // Ignore messages from older connections
+            if (thisConnectSeq !== connectSeqRef.current) {
+              return;
+            }
+            if (message.serverContent) {
+              setSessionState(LectureSessionState.LECTURING);
+            }
+            if (message.serverContent?.inputTranscription) {
+              setSessionState(LectureSessionState.LISTENING);
+            }
+
+            if (message.toolCall) {
+              logger.debug(LOG_SOURCE, "Received tool call:", message.toolCall);
+              for (const fc of message.toolCall.functionCalls) {
+                if (fc.name === "setActiveSlide") {
+                  const slideNumber = fc.args.slideNumber as number;
+                  logger.log(
+                    LOG_SOURCE,
+                    `Processing setActiveSlide function call for slide number: ${slideNumber}`
+                  );
+                  if (slideNumber >= 1 && slideNumber <= slides.length) {
+                    // Update the slide index ref immediately to ensure transcript tagging uses the latest slide
+                    currentSlideIndexRef.current = slideNumber - 1;
+                    // Interrupt any ongoing output before changing context
+                    flushOutput();
+                    onSlideChange(slideNumber);
+                    // Send slide image/canvas and anchor in a single coherent turn
+                    const slide = slides[slideNumber - 1];
+                    const anchor = buildSlideAnchorText(slide, transcript);
+                    sendMessage({ slide, text: anchor, turnComplete: true });
+                    runWithOpenSession((session) => {
+                      session.sendToolResponse({
+                        functionResponses: {
+                          id: fc.id,
+                          name: fc.name,
+                          response: {
+                            result: `OK. Changed to slide ${slideNumber}.`,
+                          },
+                        },
+                      });
+                    });
+                  } else {
+                    logger.error(
                       LOG_SOURCE,
-                      "Failed to parse JSON args for provideCanvasMarkdown; treating as markdown string"
+                      `AI requested invalid slide number: ${slideNumber}`
                     );
-                    // Treat the string itself as markdown
+                    runWithOpenSession((session) => {
+                      session.sendToolResponse({
+                        functionResponses: {
+                          id: fc.id,
+                          name: fc.name,
+                          response: {
+                            error: `Invalid slide number: ${slideNumber}. There are only ${slides.length} slides.`,
+                          },
+                        },
+                      });
+                    });
+                  }
+                } else if (fc.name === "provideCanvasMarkdown") {
+                  logger.log(
+                    LOG_SOURCE,
+                    "provideCanvasMarkdown raw args:",
+                    fc.args,
+                    "(type:",
+                    typeof fc.args,
+                    ")"
+                  );
+                  let parsedArgs = fc.args;
+                  if (typeof parsedArgs === "string") {
+                    try {
+                      parsedArgs = JSON.parse(parsedArgs);
+                    } catch {
+                      logger.warn(
+                        LOG_SOURCE,
+                        "Failed to parse JSON args for provideCanvasMarkdown; treating as markdown string"
+                      );
+                      // Treat the string itself as markdown
+                      const contentBlocks = normalizeCanvasBlocks([
+                        { type: "markdown", content: parsedArgs },
+                      ]);
+                      onRenderCanvas(
+                        contentBlocks,
+                        currentSlideIndexRef.current
+                      );
+                      runWithOpenSession((session) => {
+                        session.sendToolResponse({
+                          functionResponses: {
+                            id: fc.id,
+                            name: fc.name,
+                            response: {
+                              result: `OK. Canvas content has been rendered from string.`,
+                            },
+                          },
+                        });
+                      });
+                      continue;
+                    }
+                  }
+
+                  logger.log(
+                    LOG_SOURCE,
+                    "provideCanvasMarkdown parsed args:",
+                    parsedArgs
+                  );
+                  const markdown =
+                    (parsedArgs as any)?.markdown ??
+                    (typeof parsedArgs === "string" ? parsedArgs : null);
+
+                  if (markdown && typeof markdown === "string") {
+                    logger.log(
+                      LOG_SOURCE,
+                      `Processing provideCanvasMarkdown function call with markdown length: ${markdown.length}`
+                    );
+                    // Convert markdown string to CanvasBlock array
                     const contentBlocks = normalizeCanvasBlocks([
-                      { type: "markdown", content: parsedArgs },
+                      { type: "markdown", content: markdown },
                     ]);
                     onRenderCanvas(contentBlocks, currentSlideIndexRef.current);
                     runWithOpenSession((session) => {
@@ -830,246 +989,171 @@ export const useGeminiLive = ({
                           id: fc.id,
                           name: fc.name,
                           response: {
-                            result: `OK. Canvas content has been rendered from string.`,
+                            result: `OK. Canvas content has been rendered.`,
                           },
                         },
                       });
                     });
-                    continue;
+                  } else {
+                    logger.warn(
+                      LOG_SOURCE,
+                      `provideCanvasMarkdown received invalid args; no markdown field found`,
+                      parsedArgs
+                    );
+                    onRenderCanvas([
+                      {
+                        type: "markdown",
+                        content: JSON.stringify(parsedArgs, null, 2),
+                      },
+                    ]);
+                    runWithOpenSession((session) => {
+                      session.sendToolResponse({
+                        functionResponses: {
+                          id: fc.id,
+                          name: fc.name,
+                          response: {
+                            result: `Rendered fallback block from invalid args.`,
+                          },
+                        },
+                      });
+                    });
                   }
                 }
+              }
+            }
 
-                logger.log(
-                  LOG_SOURCE,
-                  "provideCanvasMarkdown parsed args:",
-                  parsedArgs
-                );
-                const markdown =
-                  (parsedArgs as any)?.markdown ??
-                  (typeof parsedArgs === "string" ? parsedArgs : null);
+            if (message.serverContent?.inputTranscription) {
+              const text = message.serverContent.inputTranscription.text;
+              addTranscriptEntry(text, "user", {
+                updateLastEntry: true,
+              });
+            }
 
-                if (markdown && typeof markdown === "string") {
-                  logger.log(
-                    LOG_SOURCE,
-                    `Processing provideCanvasMarkdown function call with markdown length: ${markdown.length}`
-                  );
-                  // Convert markdown string to CanvasBlock array
-                  const contentBlocks = normalizeCanvasBlocks([
-                    { type: "markdown", content: markdown },
-                  ]);
-                  onRenderCanvas(contentBlocks, currentSlideIndexRef.current);
-                  runWithOpenSession((session) => {
-                    session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: {
-                          result: `OK. Canvas content has been rendered.`,
-                        },
-                      },
-                    });
-                  });
-                } else {
-                  logger.warn(
-                    LOG_SOURCE,
-                    `provideCanvasMarkdown received invalid args; no markdown field found`,
-                    parsedArgs
-                  );
-                  onRenderCanvas([
-                    {
-                      type: "markdown",
-                      content: JSON.stringify(parsedArgs, null, 2),
-                    },
-                  ]);
-                  runWithOpenSession((session) => {
-                    session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: {
-                          result: `Rendered fallback block from invalid args.`,
-                        },
-                      },
-                    });
-                  });
+            if (message.serverContent?.outputTranscription) {
+              const text = message.serverContent.outputTranscription.text;
+              addTranscriptEntry(text, "ai", {
+                updateLastEntry: aiMessageOpenRef.current,
+              });
+            }
+
+            const audioData =
+              message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+            if (audioData && outputAudioContextRef.current) {
+              const outputCtx = outputAudioContextRef.current;
+              nextStartTimeRef.current = Math.max(
+                nextStartTimeRef.current,
+                outputCtx.currentTime
+              );
+              const audioBuffer = await decodeAudioData(
+                decode(audioData),
+                outputCtx,
+                24000,
+                1
+              );
+              const source = outputCtx.createBufferSource();
+              source.buffer = audioBuffer;
+              source.connect(outputCtx.destination);
+              source.addEventListener("ended", () => {
+                audioSourcesRef.current.delete(source);
+              });
+              source.start(nextStartTimeRef.current);
+              nextStartTimeRef.current += audioBuffer.duration;
+              audioSourcesRef.current.add(source);
+            }
+
+            if (message.serverContent?.generationComplete) {
+              // Primary delimiter: model finished generating this response
+              aiMessageOpenRef.current = false;
+              // Periodically re-anchor to the active slide during long conversations
+              if (REANCHOR_EVERY_N_TURNS > 0) {
+                turnCounterRef.current += 1;
+                if (turnCounterRef.current % REANCHOR_EVERY_N_TURNS === 0) {
+                  const slide = slides[currentSlideIndexRef.current];
+                  if (slide) {
+                    sendStrongSlideAnchor(slide, transcript);
+                  }
                 }
               }
             }
-          }
 
-          if (message.serverContent?.inputTranscription) {
-            const text = message.serverContent.inputTranscription.text;
-            setTranscript((prev) => {
-              const newTranscript = [...prev];
-              const lastEntry = newTranscript[newTranscript.length - 1];
-              if (lastEntry?.speaker === "user") {
-                const trimmed = text.trim();
-                // Skip if this chunk already appears at the end of the last user entry
-                if ((lastEntry.text || "").endsWith(trimmed)) {
-                  return prev;
-                }
-                // Replace with latest transcript-so-far to avoid duplicate words
-                const prevText = lastEntry.text || "";
-                if (text.startsWith(prevText)) {
-                  lastEntry.text = text;
-                } else if (prevText.startsWith(text)) {
-                  // keep prevText (no change)
-                } else {
-                  // fallback: append if server is sending pure deltas
-                  lastEntry.text = prevText + text;
-                }
-              } else {
-                newTranscript.push({ speaker: "user", text });
-              }
-              return newTranscript;
-            });
-          }
-
-          if (message.serverContent?.outputTranscription) {
-            const text = message.serverContent.outputTranscription.text;
-            setTranscript((prev) => {
-              const newTranscript = [...prev];
-              const lastEntry = newTranscript[newTranscript.length - 1];
-              if (aiMessageOpenRef.current && lastEntry?.speaker === "ai") {
-                const trimmed = text.trim();
-                // Skip if this chunk already appears at the end of the last AI entry
-                if ((lastEntry.text || "").endsWith(trimmed)) {
-                  return prev;
-                }
-                // Replace with latest transcript-so-far to avoid duplicate words
-                const prevText = lastEntry.text || "";
-                if (text.startsWith(prevText)) {
-                  lastEntry.text = text;
-                } else if (prevText.startsWith(text)) {
-                  // keep prevText (no change)
-                } else {
-                  // fallback: append if server is sending pure deltas
-                  lastEntry.text = prevText + text;
-                }
-              } else {
-                newTranscript.push({
-                  speaker: "ai",
-                  text,
-                  slideNumber: currentSlideIndexRef.current + 1,
-                });
-                aiMessageOpenRef.current = true;
-              }
-              return newTranscript;
-            });
-          }
-
-          const audioData =
-            message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-          if (audioData && outputAudioContextRef.current) {
-            const outputCtx = outputAudioContextRef.current;
-            nextStartTimeRef.current = Math.max(
-              nextStartTimeRef.current,
-              outputCtx.currentTime
-            );
-            const audioBuffer = await decodeAudioData(
-              decode(audioData),
-              outputCtx,
-              24000,
-              1
-            );
-            const source = outputCtx.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(outputCtx.destination);
-            source.addEventListener("ended", () => {
-              audioSourcesRef.current.delete(source);
-            });
-            source.start(nextStartTimeRef.current);
-            nextStartTimeRef.current += audioBuffer.duration;
-            audioSourcesRef.current.add(source);
-          }
-
-          if (message.serverContent?.generationComplete) {
-            // Primary delimiter: model finished generating this response
-            aiMessageOpenRef.current = false;
-            // Periodically re-anchor to the active slide during long conversations
-            if (REANCHOR_EVERY_N_TURNS > 0) {
-              turnCounterRef.current += 1;
-              if (turnCounterRef.current % REANCHOR_EVERY_N_TURNS === 0) {
-                const slide = slides[currentSlideIndexRef.current];
-                if (slide) {
-                  sendStrongSlideAnchor(slide, transcript);
-                }
-              }
+            if (message.serverContent?.turnComplete) {
+              // Backup delimiter
+              aiMessageOpenRef.current = false;
             }
-          }
 
-          if (message.serverContent?.turnComplete) {
-            // Backup delimiter
-            aiMessageOpenRef.current = false;
-          }
-
-          if (message.serverContent?.interrupted) {
-            logger.debug(
+            if (message.serverContent?.interrupted) {
+              logger.debug(
+                LOG_SOURCE,
+                "AI speech was interrupted. Clearing audio queue."
+              );
+              for (const source of audioSourcesRef.current.values()) {
+                source.stop();
+              }
+              audioSourcesRef.current.clear();
+              nextStartTimeRef.current = 0;
+              // Treat interruption as end of current message box
+              aiMessageOpenRef.current = false;
+            }
+          },
+          onerror: (e: ErrorEvent) => {
+            // Ignore errors from older connections
+            if (thisConnectSeq !== connectSeqRef.current) {
+              return;
+            }
+            logger.error(LOG_SOURCE, "Session error event received.", e);
+            sessionOpenRef.current = false;
+            setError("A connection error occurred. Please try to reconnect.");
+            cleanupConnectionResources();
+            setSessionState(LectureSessionState.DISCONNECTED);
+          },
+          onclose: (e: CloseEvent) => {
+            // Ignore closes from older connections (e.g., cleanup of previous session)
+            if (thisConnectSeq !== connectSeqRef.current) {
+              return;
+            }
+            logger.warn(
               LOG_SOURCE,
-              "AI speech was interrupted. Clearing audio queue."
+              "Session close event received. Code:",
+              e.code,
+              "Reason:",
+              e.reason,
+              "wasClean:",
+              e.wasClean
             );
-            for (const source of audioSourcesRef.current.values()) {
-              source.stop();
+            // Regardless of clean/unclean close, stop streaming and require reconnect
+            sessionOpenRef.current = false;
+            if (!e.wasClean) {
+              setError(
+                "The connection was lost unexpectedly. Please reconnect."
+              );
             }
-            audioSourcesRef.current.clear();
-            nextStartTimeRef.current = 0;
-            // Treat interruption as end of current message box
-            aiMessageOpenRef.current = false;
-          }
+            cleanupConnectionResources();
+            setSessionState(LectureSessionState.DISCONNECTED);
+          },
         },
-        onerror: (e: ErrorEvent) => {
-          // Ignore errors from older connections
-          if (thisConnectSeq !== connectSeqRef.current) {
-            return;
-          }
-          logger.error(LOG_SOURCE, "Session error event received.", e);
-          sessionOpenRef.current = false;
-          setError("A connection error occurred. Please try to reconnect.");
-          cleanupConnectionResources();
-          setSessionState(LectureSessionState.DISCONNECTED);
-        },
-        onclose: (e: CloseEvent) => {
-          // Ignore closes from older connections (e.g., cleanup of previous session)
-          if (thisConnectSeq !== connectSeqRef.current) {
-            return;
-          }
-          logger.warn(
-            LOG_SOURCE,
-            "Session close event received. Code:",
-            e.code,
-            "Reason:",
-            e.reason,
-            "wasClean:",
-            e.wasClean
-          );
-          // Regardless of clean/unclean close, stop streaming and require reconnect
-          sessionOpenRef.current = false;
-          if (!e.wasClean) {
-            setError("The connection was lost unexpectedly. Please reconnect.");
-          }
-          cleanupConnectionResources();
-          setSessionState(LectureSessionState.DISCONNECTED);
-        },
-      },
-    });
+      });
 
-    sessionPromiseRef.current = sessionPromise;
-  }, [
-    slides,
-    generalInfo,
-    transcript,
-    setTranscript,
-    sendMessage,
-    selectedLanguage,
-    selectedVoice,
-    selectedModel,
-    userCustomPrompt,
-    onSlideChange,
-    onRenderCanvas,
-    apiKey,
-    cleanupConnectionResources,
-    currentSlideIndex,
-  ]);
+      sessionPromiseRef.current = sessionPromise;
+    },
+    [
+      slides,
+      generalInfo,
+      transcript,
+      setTranscript,
+      sendMessage,
+      selectedLanguage,
+      selectedVoice,
+      selectedModel,
+      userCustomPrompt,
+      onSlideChange,
+      onRenderCanvas,
+      apiKey,
+      cleanupConnectionResources,
+      currentSlideIndex,
+      buildSlideMemory,
+      addTranscriptEntry,
+    ]
+  );
 
   const replay = useCallback(() => {
     logger.debug(LOG_SOURCE, "replay() called.");

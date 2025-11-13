@@ -72,7 +72,13 @@ const LecturePage: React.FC<LecturePageProps> = ({
   const [isRectangleToolActive, setIsRectangleToolActive] = useState(false);
 
   const { showToast } = useToast();
-  const { attachments, addFile, addSelection, removeAttachment, clearAttachments } = useAttachments();
+  const {
+    attachments,
+    addFile,
+    addSelection,
+    removeAttachment,
+    clearAttachments,
+  } = useAttachments();
 
   const { saveSessionState } = useSessionPersistence({
     session,
@@ -282,7 +288,8 @@ const LecturePage: React.FC<LecturePageProps> = ({
         LOG_SOURCE,
         "Microphone unmuted while disconnected. Auto-reconnecting."
       );
-      startLecture();
+      // This is a disconnected reconnection - silent resume
+      startLecture("disconnected");
     }
   }, [isMuted, sessionState, startLecture]);
   // Removed: auto-fix error flow. Canvas is markdown-only now.
@@ -315,7 +322,8 @@ const LecturePage: React.FC<LecturePageProps> = ({
   const handleStartLecture = () => {
     logger.log(LOG_SOURCE, "handleStartLecture called for a new session.");
     setHasLectureStarted(true);
-    startLecture();
+    // This is a new lecture
+    startLecture("new");
   };
 
   // Auto-mute 1.5s after AI starts speaking unless the turn switches back to the user
@@ -372,7 +380,8 @@ const LecturePage: React.FC<LecturePageProps> = ({
         LOG_SOURCE,
         "Continuing session, calling startLecture automatically."
       );
-      startLecture();
+      // This is a saved session continuation from SessionsPage
+      startLecture("saved");
     }
     // This effect should only run once on mount for this purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -380,7 +389,8 @@ const LecturePage: React.FC<LecturePageProps> = ({
 
   const handleReconnect = useCallback(() => {
     logger.log(LOG_SOURCE, "handleReconnect called.");
-    startLecture();
+    // This is a disconnected reconnection - silent resume
+    startLecture("disconnected");
   }, [startLecture]);
 
   const handleMuteToggle = useCallback(() => {
@@ -452,14 +462,25 @@ const LecturePage: React.FC<LecturePageProps> = ({
       logger.debug(LOG_SOURCE, "handleSendMessage called for typed text.");
       if (!sendMessage) return;
 
+      // Skip empty messages (no text and no attachments)
+      const trimmedMessage = message.trim();
+      if (
+        !trimmedMessage &&
+        (!messageAttachments || messageAttachments.length === 0)
+      ) {
+        return;
+      }
+
       // Optimistically add the user's typed message to the transcript.
       // The `inputTranscription` event is for voice input, not for messages sent via this text input.
+      // Tag user messages with the current slide number
       setTranscript((prev) => [
         ...prev,
         {
           speaker: "user",
           text: message,
           attachments: messageAttachments,
+          slideNumber: currentSlideIndex + 1,
         },
       ]);
       sendMessage({
@@ -469,7 +490,7 @@ const LecturePage: React.FC<LecturePageProps> = ({
       });
       clearAttachments();
     },
-    [sendMessage, setTranscript, clearAttachments]
+    [sendMessage, setTranscript, clearAttachments, currentSlideIndex]
   );
 
   const handleEndSession = useCallback(async () => {
