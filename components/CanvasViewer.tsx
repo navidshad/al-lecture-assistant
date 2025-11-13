@@ -167,7 +167,7 @@ const CanvasViewer: React.FC<CanvasViewerProps> = ({
       >
         <div
           ref={contentRef}
-          className="w-full px-6 py-4 overflow-y-auto overflow-x-hidden min-h-0"
+          className="w-full h-full px-6 py-4 overflow-y-auto overflow-x-hidden"
           dir="auto"
         >
           {contentBlocks.map((block, index) => (
