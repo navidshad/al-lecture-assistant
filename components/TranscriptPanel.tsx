@@ -35,14 +35,44 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
   onClearAttachments,
 }) => {
   const endOfMessagesRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [message, setMessage] = useState("");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const { showToast } = useToast();
+  const previousTranscriptLengthRef = useRef(transcript.length);
 
+  // Scroll to bottom when transcript changes (for new messages)
   useEffect(() => {
-    endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [transcript]);
+    if (transcript.length > 0 && isVisible) {
+      const transcriptLengthChanged = previousTranscriptLengthRef.current !== transcript.length;
+      
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        if (transcriptLengthChanged && endOfMessagesRef.current) {
+          // Smooth scroll for new messages
+          endOfMessagesRef.current.scrollIntoView({ behavior: "smooth" });
+        }
+      });
+      
+      previousTranscriptLengthRef.current = transcript.length;
+    }
+  }, [transcript, isVisible]);
+
+  // Scroll to bottom when panel becomes visible with existing messages (initial load or reopening)
+  useEffect(() => {
+    if (isVisible && transcript.length > 0) {
+      // Use a small delay to ensure the panel is fully rendered and visible
+      const timeoutId = setTimeout(() => {
+        if (scrollContainerRef.current) {
+          // Scroll immediately to bottom when panel becomes visible
+          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+        }
+      }, 150);
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isVisible, transcript.length]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -123,7 +153,10 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
             <h2 className={`text-xl font-semibold`}>Lecture Transcript</h2>
           </header>
         )}
-        <div className={`flex-1 overflow-y-auto ${isDesktop ? "p-4" : "p-2"}`}>
+        <div 
+          ref={scrollContainerRef}
+          className={`flex-1 overflow-y-auto overflow-x-hidden ${isDesktop ? "p-4" : "p-2"}`}
+        >
           <div className={`${isDesktop ? "space-y-6" : "space-y-3"}`}>
             {transcript.map((entry, index) => (
               <div
@@ -144,7 +177,7 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
                   )}
                 </div>
                 <div
-                  className={`flex-1 bg-gray-700 rounded-lg relative group ${
+                  className={`flex-1 min-w-0 bg-gray-700 rounded-lg relative group ${
                     isDesktop ? "p-3" : "p-2"
                   }`}
                 >
@@ -182,7 +215,7 @@ const TranscriptPanel: React.FC<TranscriptPanelProps> = ({
                     </div>
                   )}
                   {entry.text && (
-                    <div className={isDesktop ? "" : "text-xs"}>
+                    <div className={`${isDesktop ? "" : "text-xs"} break-words`} style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
                       <MarkdownRenderer markdown={entry.text} />
                     </div>
                   )}

@@ -207,7 +207,8 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ markdown }) => {
 
   return (
     <div
-      className="markdown-content text-gray-200 [&>*:first-child]:mt-0"
+      className="markdown-content text-gray-200 [&>*:first-child]:mt-0 break-words"
+      style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
       dir="auto"
     >
       {segments.map((segment, index) => {
